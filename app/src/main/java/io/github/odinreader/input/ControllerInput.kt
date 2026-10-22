@@ -22,11 +22,11 @@ class ControllerInput(private val onAction: (ControllerAction) -> Boolean) {
     private class MotionState {
         val resolver = AxisDirectionResolver()
         val repeater = DirectionRepeater()
-        val leftTrigger = TriggerLatch()
-        val rightTrigger = TriggerLatch()
+        val leftTrigger = TriggerActionGate()
+        val rightTrigger = TriggerActionGate()
         var navigationHandled = false
-        var leftTriggerHandled = false
-        var rightTriggerHandled = false
+        var directionActive = false
+        var suppressDirectionUntilRelease = false
         var usingHat = false
     }
 
@@ -38,6 +38,20 @@ class ControllerInput(private val onAction: (ControllerAction) -> Boolean) {
     private var lastDirectionWasMotion = false
     private var lastDirectionAt = Long.MIN_VALUE
     private var lastDirectionHandled = false
+
+    var bindings: ControllerBindings = ControllerBindings()
+        set(value) {
+            if (field == value) return
+            suppressHeldInputs()
+            field = value
+        }
+
+    var useDefaultBindings: Boolean = true
+        set(value) {
+            if (field == value) return
+            suppressHeldInputs()
+            field = value
+        }
 
     private val repeatRunnable = object : Runnable {
         override fun run() {
@@ -54,7 +68,7 @@ class ControllerInput(private val onAction: (ControllerAction) -> Boolean) {
     }
 
     fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val action = actionForKey(event.keyCode) ?: return false
+        val action = bindings.actionForKey(event.keyCode, useDefaultBindings) ?: return false
         if (!isController(event) && !isKeyboardNavigation(event.keyCode)) return false
         val id = KeyId(event.deviceId, event.keyCode)
         if (event.action == KeyEvent.ACTION_UP) {
@@ -65,7 +79,7 @@ class ControllerInput(private val onAction: (ControllerAction) -> Boolean) {
 
         val held = heldKeys[id]
         if (held != null) {
-            if (event.repeatCount > 0 && held.action.isRepeatable() &&
+            if (event.repeatCount > 0 && !event.keyCode.isPhysicalTrigger() && held.action.isRepeatable() &&
                 held.gate.press(event.eventTime, isRepeat = true)
             ) {
                 emit(held.action, event.deviceId, event.eventTime, fromMotion = false)
@@ -76,7 +90,7 @@ class ControllerInput(private val onAction: (ControllerAction) -> Boolean) {
         // key-down was not handled here.
         if (event.repeatCount > 0) return false
 
-        val handled = if (action.isTrigger()) {
+        val handled = if (event.keyCode.isPhysicalTrigger()) {
             updateDigitalTrigger(event, pressed = true)
         } else {
             emit(action, event.deviceId, event.eventTime, fromMotion = false)
@@ -106,8 +120,8 @@ class ControllerInput(private val onAction: (ControllerAction) -> Boolean) {
 
         val state = devices.getOrPut(event.deviceId) { MotionState() }
         val previouslyHandled = state.navigationHandled ||
-            (state.leftTrigger.analogPressed && state.leftTriggerHandled) ||
-            (state.rightTrigger.analogPressed && state.rightTriggerHandled)
+            (state.leftTrigger.analogPressed && state.leftTrigger.handled) ||
+            (state.rightTrigger.analogPressed && state.rightTrigger.handled)
         val hasHeldDpad = heldKeys.any { (id, key) ->
             id.deviceId == event.deviceId && key.action.isDirection()
         }
@@ -120,27 +134,41 @@ class ControllerInput(private val onAction: (ControllerAction) -> Boolean) {
             hatX = hatX,
             hatY = hatY,
         )
-        state.repeater.update(direction, event.eventTime)?.let {
-            state.navigationHandled = emit(it.action, event.deviceId, event.eventTime, fromMotion = true)
+        state.directionActive = direction != null
+        if (direction == null) state.suppressDirectionUntilRelease = false
+        if (!state.suppressDirectionUntilRelease) {
+            state.repeater.update(direction, event.eventTime)?.let {
+                state.navigationHandled = emit(it.action, event.deviceId, event.eventTime, fromMotion = true)
+            }
         }
         if (direction == null) state.navigationHandled = false
 
-        val leftPressed = state.leftTrigger.updateAxis(
+        state.leftTrigger.updateAxis(
             maxOf(event.getAxisValue(MotionEvent.AXIS_LTRIGGER), event.getAxisValue(MotionEvent.AXIS_BRAKE)),
-        )
-        val rightPressed = state.rightTrigger.updateAxis(
+        ) { onAction(actionForButton(ControllerButton.L2)) }
+        state.rightTrigger.updateAxis(
             maxOf(event.getAxisValue(MotionEvent.AXIS_RTRIGGER), event.getAxisValue(MotionEvent.AXIS_GAS)),
-        )
-        if (leftPressed) state.leftTriggerHandled = onAction(ControllerAction.PreviousChapter)
-        if (rightPressed) state.rightTriggerHandled = onAction(ControllerAction.NextChapter)
-        if (!state.leftTrigger.isPressed) state.leftTriggerHandled = false
-        if (!state.rightTrigger.isPressed) state.rightTriggerHandled = false
+        ) { onAction(actionForButton(ControllerButton.R2)) }
         scheduleRepeat()
-        return previouslyHandled || state.navigationHandled ||
-            (state.leftTrigger.analogPressed && state.leftTriggerHandled) ||
-            (state.rightTrigger.analogPressed && state.rightTriggerHandled)
+        return previouslyHandled || state.navigationHandled || state.suppressDirectionUntilRelease ||
+            (state.leftTrigger.analogPressed && state.leftTrigger.handled) ||
+            (state.rightTrigger.analogPressed && state.rightTrigger.handled)
     }
 
+    /** A new screen/mapping must not reinterpret a button or axis that is still held. */
+    private fun suppressHeldInputs() {
+        handler.removeCallbacks(repeatRunnable)
+        heldKeys.values.forEach { it.gate.suppressUntilRelease() }
+        devices.values.forEach { state ->
+            state.repeater.reset()
+            state.suppressDirectionUntilRelease = state.directionActive
+            state.leftTrigger.suppressUntilRelease()
+            state.rightTrigger.suppressUntilRelease()
+        }
+        lastDirection = null
+    }
+
+    /** Full reset is reserved for leaving the active input window. */
     fun reset() {
         handler.removeCallbacks(repeatRunnable)
         heldKeys.clear()
@@ -155,14 +183,10 @@ class ControllerInput(private val onAction: (ControllerAction) -> Boolean) {
         val state = devices.getOrPut(event.deviceId) { MotionState() }
         val isLeft = event.keyCode == KeyEvent.KEYCODE_BUTTON_L2
         val latch = if (isLeft) state.leftTrigger else state.rightTrigger
-        if (latch.setDigital(pressed)) {
-            val handled = onAction(if (isLeft) ControllerAction.PreviousChapter else ControllerAction.NextChapter)
-            if (isLeft) state.leftTriggerHandled = handled else state.rightTriggerHandled = handled
+        latch.setDigital(pressed) {
+            onAction(actionForButton(if (isLeft) ControllerButton.L2 else ControllerButton.R2))
         }
-        if (!latch.isPressed) {
-            if (isLeft) state.leftTriggerHandled = false else state.rightTriggerHandled = false
-        }
-        return if (isLeft) state.leftTriggerHandled else state.rightTriggerHandled
+        return latch.handled
     }
 
     private fun emit(action: ControllerAction, deviceId: Int, now: Long, fromMotion: Boolean): Boolean {
@@ -204,23 +228,9 @@ class ControllerInput(private val onAction: (ControllerAction) -> Boolean) {
         KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_ESCAPE,
     )
 
-    private fun actionForKey(code: Int): ControllerAction? = when (code) {
-        KeyEvent.KEYCODE_DPAD_UP -> ControllerAction.MoveUp
-        KeyEvent.KEYCODE_DPAD_DOWN -> ControllerAction.MoveDown
-        KeyEvent.KEYCODE_DPAD_LEFT -> ControllerAction.MoveLeft
-        KeyEvent.KEYCODE_DPAD_RIGHT -> ControllerAction.MoveRight
-        KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_PAGE_UP -> ControllerAction.PreviousPage
-        KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_PAGE_DOWN -> ControllerAction.NextPage
-        KeyEvent.KEYCODE_BUTTON_L2 -> ControllerAction.PreviousChapter
-        KeyEvent.KEYCODE_BUTTON_R2 -> ControllerAction.NextChapter
-        KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER,
-        KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> ControllerAction.Confirm
-        KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> ControllerAction.Back
-        KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_SELECT -> ControllerAction.ToggleControls
-        KeyEvent.KEYCODE_BUTTON_Y -> ControllerAction.OpenContents
-        KeyEvent.KEYCODE_BUTTON_START -> ControllerAction.OpenSettings
-        else -> null
-    }
+    private fun actionForButton(button: ControllerButton): ControllerAction =
+        if (useDefaultBindings) button.defaultAction else bindings.actionFor(button)
+
 }
 
 private fun ControllerAction.isDirection(): Boolean = when (this) {
@@ -229,8 +239,8 @@ private fun ControllerAction.isDirection(): Boolean = when (this) {
     else -> false
 }
 
-private fun ControllerAction.isTrigger(): Boolean =
-    this == ControllerAction.PreviousChapter || this == ControllerAction.NextChapter
+private fun Int.isPhysicalTrigger(): Boolean =
+    this == KeyEvent.KEYCODE_BUTTON_L2 || this == KeyEvent.KEYCODE_BUTTON_R2
 
 private fun ControllerAction.isRepeatable(): Boolean =
     isDirection() || this == ControllerAction.PreviousPage || this == ControllerAction.NextPage

@@ -8,6 +8,9 @@ import io.github.odinreader.data.Book
 import io.github.odinreader.data.BookContent
 import io.github.odinreader.data.BookRepository
 import io.github.odinreader.data.ReadingProgress
+import io.github.odinreader.input.ControllerAction
+import io.github.odinreader.input.ControllerBindings
+import io.github.odinreader.input.ControllerButton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,7 +19,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class PaperStyle(val label: String) { Day("日间"), Paper("纸张"), Night("夜间") }
+enum class PaperStyle(val label: String) { Day("日间"), Paper("纸张"), Night("夜间"), Theme("跟随主题") }
 
 data class ReaderUiState(
     val books: List<Book> = emptyList(),
@@ -25,7 +28,9 @@ data class ReaderUiState(
     val busy: Boolean = true,
     val message: String? = null,
     val fontSize: Float = 20f,
-    val paperStyle: PaperStyle = PaperStyle.Paper,
+    val paperStyle: PaperStyle = PaperStyle.Theme,
+    val appTheme: AppTheme = AppTheme.System,
+    val controllerBindings: ControllerBindings = ControllerBindings(),
 )
 
 class ReaderViewModel(application: Application) : AndroidViewModel(application) {
@@ -34,7 +39,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val mutableState = MutableStateFlow(
         ReaderUiState(
             fontSize = preferences.getFloat("font_size", 20f).coerceIn(14f, 32f),
-            paperStyle = PaperStyle.entries.getOrElse(preferences.getInt("paper_style", 1)) { PaperStyle.Paper },
+            paperStyle = PaperStyle.entries.getOrElse(
+                preferences.getInt("paper_style", PaperStyle.Theme.ordinal),
+            ) { PaperStyle.Theme },
+            appTheme = AppTheme.entries.firstOrNull { it.name == preferences.getString("app_theme", null) }
+                ?: AppTheme.System,
+            controllerBindings = ControllerBindings.fromPreferences(
+                ControllerButton.entries.mapNotNull { button ->
+                    preferences.getString("binding.${button.name}", null)?.let { button.name to it }
+                }.toMap(),
+            ),
         ),
     )
     val state = mutableState.asStateFlow()
@@ -83,6 +97,28 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun setPaperStyle(style: PaperStyle) {
         mutableState.update { it.copy(paperStyle = style) }
         preferences.edit().putInt("paper_style", style.ordinal).apply()
+    }
+
+    fun setAppTheme(theme: AppTheme) {
+        // Selecting a palette also applies it to the native book page. An explicit
+        // paper background can still be chosen afterwards without changing the UI.
+        mutableState.update { it.copy(appTheme = theme, paperStyle = PaperStyle.Theme) }
+        preferences.edit().putString("app_theme", theme.name)
+            .putInt("paper_style", PaperStyle.Theme.ordinal).apply()
+    }
+
+    fun setControllerBinding(button: ControllerButton, action: ControllerAction) {
+        val bindings = state.value.controllerBindings.withBinding(button, action)
+        saveControllerBindings(bindings)
+    }
+
+    fun resetControllerBindings() { saveControllerBindings(ControllerBindings()) }
+
+    private fun saveControllerBindings(bindings: ControllerBindings) {
+        mutableState.update { it.copy(controllerBindings = bindings) }
+        val editor = preferences.edit()
+        bindings.toPreferences().forEach { (button, action) -> editor.putString("binding.$button", action) }
+        editor.apply()
     }
 
     fun dismissMessage() { mutableState.update { it.copy(message = null) } }

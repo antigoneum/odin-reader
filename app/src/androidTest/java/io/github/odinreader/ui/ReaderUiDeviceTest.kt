@@ -34,6 +34,7 @@ import io.github.odinreader.MainActivity
 import io.github.odinreader.data.BookRepository
 import io.github.odinreader.data.DemoBook
 import io.github.odinreader.data.ReadingProgress
+import io.github.odinreader.input.ControllerButton
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -63,7 +64,9 @@ class ReaderUiDeviceTest {
             savedProgressValues = progressKeys.associateWith { progress.all[it] }
             savedSettingValues = settingKeys.associateWith { settings.all[it] }
             BookRepository(context).saveProgress(DemoBook.ID, ReadingProgress())
-            check(settings.edit().putFloat("font_size", 20f).putInt("paper_style", 1).commit())
+            val editor = settings.edit()
+            settingKeys.forEach { editor.remove(it) }
+            check(editor.putFloat("font_size", 20f).putInt("paper_style", 1).commit())
         }
 
         override fun after() {
@@ -344,6 +347,7 @@ class ReaderUiDeviceTest {
                 null -> editor.remove(key)
                 is Int -> editor.putInt(key, value)
                 is Float -> editor.putFloat(key, value)
+                is String -> editor.putString(key, value)
                 else -> error("Unexpected preference type for $key")
             }
         }
@@ -358,7 +362,8 @@ class ReaderUiDeviceTest {
         const val PROGRESS_PREFS = "reading_progress"
         const val SETTINGS_PREFS = "reader_settings"
         val progressKeys = listOf(DemoBook.ID + ".chapter", DemoBook.ID + ".page", DemoBook.ID + ".offset")
-        val settingKeys = listOf("font_size", "paper_style")
+        val settingKeys = listOf("font_size", "paper_style", "app_theme") +
+            ControllerButton.entries.map { "binding.${it.name}" }
         val COUNTER = Regex("""第 (\d+) / (\d+) 章 · (\d+) / (\d+) 页""")
         val pageCounterMatcher = SemanticsMatcher("reader chapter/page counter") { node ->
             node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { COUNTER.matches(it.text) }

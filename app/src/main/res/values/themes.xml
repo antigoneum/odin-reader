@@ -3,6 +3,7 @@
     <style name="Theme.OdinReader" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowFullscreen">true</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">#F8F9F4</item>
         <item name="android:colorAccent">#3D6950</item>

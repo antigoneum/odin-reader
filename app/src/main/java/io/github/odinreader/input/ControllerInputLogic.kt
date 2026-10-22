@@ -75,13 +75,19 @@ internal class KeyRepeatGate(
     private val repeatIntervalMillis: Long = 140L,
 ) {
     private var nextRepeatAt = Long.MIN_VALUE
+    private var suppressed = false
+
+    fun suppressUntilRelease() {
+        suppressed = true
+    }
 
     fun press(now: Long, isRepeat: Boolean): Boolean {
         if (!isRepeat) {
+            suppressed = false
             nextRepeatAt = now + initialDelayMillis
             return true
         }
-        if (now < nextRepeatAt) return false
+        if (suppressed || now < nextRepeatAt) return false
         nextRepeatAt = now + repeatIntervalMillis
         return true
     }
@@ -104,5 +110,43 @@ internal class TriggerLatch {
         val wasPressed = isPressed
         analogPressed = if (analogPressed) value > 0.35f else value >= 0.65f
         return !wasPressed && isPressed
+    }
+}
+
+/**
+ * Preserves the physical trigger state when the reading map or active screen changes.
+ * The next map becomes eligible only after both the axis and digital key release.
+ */
+internal class TriggerActionGate {
+    private val latch = TriggerLatch()
+    private var suppressed = false
+    val analogPressed: Boolean get() = latch.analogPressed
+    val isPressed: Boolean get() = latch.isPressed
+    var handled: Boolean = false
+        private set
+
+    fun setDigital(pressed: Boolean, onPress: () -> Boolean) {
+        update(latch.setDigital(pressed), onPress)
+    }
+
+    fun updateAxis(value: Float, onPress: () -> Boolean) {
+        update(latch.updateAxis(value), onPress)
+    }
+
+    fun suppressUntilRelease() {
+        if (isPressed) {
+            suppressed = true
+            // Consume the remaining stream rather than leak it into a new screen.
+            handled = true
+        }
+    }
+
+    private fun update(newPress: Boolean, onPress: () -> Boolean) {
+        if (!isPressed) {
+            suppressed = false
+            handled = false
+        } else if (newPress && !suppressed) {
+            handled = onPress()
+        }
     }
 }

@@ -32,19 +32,21 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import io.github.odinreader.data.BookContent
 import io.github.odinreader.data.ReadingProgress
 import io.github.odinreader.input.ControllerAction
+import io.github.odinreader.input.ControllerBindings
 import io.github.odinreader.reader.Page
 import io.github.odinreader.reader.Paginator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
 
-private enum class ReaderPanel { Contents, Settings }
+private enum class ReaderPanel { Contents }
 private data class LayoutKey(val chapter: Int, val width: Int, val height: Int, val textSize: Float)
 private data class ReaderLayout(val key: LayoutKey, val pages: List<Page>, val index: Int, val anchorOffset: Int)
 
@@ -55,8 +57,11 @@ fun ReaderScreen(
     initialProgress: ReadingProgress,
     fontSize: Float,
     paperStyle: PaperStyle,
-    onFontSize: (Float) -> Unit,
-    onPaperStyle: (PaperStyle) -> Unit,
+    bindings: ControllerBindings,
+    obscured: Boolean,
+    onOpenSettings: () -> Unit,
+    onNavigationModeChanged: (Boolean) -> Unit,
+    onBackgroundChanged: (Color?) -> Unit,
     onProgress: (ReadingProgress) -> Unit,
     onClose: () -> Unit,
     onActionReady: (((ControllerAction) -> Boolean)?) -> Unit,
@@ -89,8 +94,15 @@ fun ReaderScreen(
         PaperStyle.Day -> Color(0xFFFAFAF7)
         PaperStyle.Paper -> Color(0xFFF2EBD9)
         PaperStyle.Night -> Color(0xFF121614)
+        PaperStyle.Theme -> MaterialTheme.colorScheme.background
     }
-    val foreground = if (paperStyle == PaperStyle.Night) Color(0xFFD0D5CD) else Color(0xFF303A31)
+    val foreground = when (paperStyle) {
+        PaperStyle.Theme -> MaterialTheme.colorScheme.onBackground
+        PaperStyle.Night -> Color(0xFFD0D5CD)
+        else -> Color(0xFF303A31)
+    }
+    val visibleBackground = if (panel != null) MaterialTheme.colorScheme.surface else background
+    SideEffect { onBackgroundChanged(visibleBackground) }
     fun changeChapter(direction: Int): Boolean {
         val next = chapter + direction
         if (next in content.chapters.indices) {
@@ -130,7 +142,7 @@ fun ReaderScreen(
             when (action) {
                 ControllerAction.Back, ControllerAction.ToggleControls -> { panel = null; true }
                 ControllerAction.OpenContents -> { panel = if (panel == ReaderPanel.Contents) null else ReaderPanel.Contents; true }
-                ControllerAction.OpenSettings -> { panel = if (panel == ReaderPanel.Settings) null else ReaderPanel.Settings; true }
+                ControllerAction.OpenSettings -> { panel = null; onOpenSettings(); true }
                 else -> navigateFocus(action, { focusManager.moveFocus(it) }, activateFocused)
             }
         } else {
@@ -147,18 +159,24 @@ fun ReaderScreen(
                 ControllerAction.Back -> { if (chrome) chrome = false else onClose(); true }
                 ControllerAction.ToggleControls -> { chrome = !chrome; true }
                 ControllerAction.OpenContents -> { panel = ReaderPanel.Contents; true }
-                ControllerAction.OpenSettings -> { panel = ReaderPanel.Settings; true }
+                ControllerAction.OpenSettings -> { onOpenSettings(); true }
             }
         }
     }
     DisposableEffect(content.book.id) {
         onActionReady { latestAction(it) }
-        onDispose { onActionReady(null) }
+        onDispose {
+            onActionReady(null)
+            onBackgroundChanged(null)
+        }
     }
-    LaunchedEffect(chrome, panel) { if (chrome && panel == null) toolbarFocus.requestFocus() }
+    LaunchedEffect(chrome, panel, obscured) {
+        onNavigationModeChanged(chrome || panel != null)
+        if (chrome && panel == null && !obscured) toolbarFocus.requestFocus()
+    }
 
     Box(Modifier.fillMaxSize().background(background)) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 24.dp, vertical = 12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(content.book.title, color = foreground.copy(alpha = 0.55f), style = MaterialTheme.typography.labelMedium, maxLines = 1, modifier = Modifier.weight(1f))
                 Text(content.chapters[chapter].title, color = foreground.copy(alpha = 0.55f), style = MaterialTheme.typography.labelMedium, maxLines = 1, modifier = Modifier.weight(1f))
@@ -192,8 +210,8 @@ fun ReaderScreen(
                         onProgress(ReadingProgress(it.key.chapter, it.index, it.anchorOffset))
                     }
                 }
-                val flipPage by rememberUpdatedState<(Int) -> Unit> { changePage(it) }
-                val toggleChrome by rememberUpdatedState { chrome = !chrome }
+                val flipPage by rememberUpdatedState<(Int) -> Unit> { if (!obscured) changePage(it) }
+                val toggleChrome by rememberUpdatedState { if (!obscured) chrome = !chrome }
                 var dragDistance by remember { mutableFloatStateOf(0f) }
                 val dragThreshold = with(density) { 48.dp.toPx() }
                 AndroidView(
@@ -245,40 +263,59 @@ fun ReaderScreen(
             }
             val active = layout?.takeIf { it.key.chapter == chapter }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("L1 上一页 · R1 下一页", color = foreground.copy(alpha = 0.45f), style = MaterialTheme.typography.labelSmall)
+                Text(
+                    "${bindings.labelFor(ControllerAction.PreviousPage)} 上一页 · ${bindings.labelFor(ControllerAction.NextPage)} 下一页",
+                    color = foreground.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
                 Text(
                     if (active == null) "正在排版…" else "第 ${chapter + 1} / ${content.chapters.size} 章 · ${active.index + 1} / ${active.pages.size} 页",
                     color = foreground.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall,
                 )
-                Text("X 控制栏 · Y 目录", color = foreground.copy(alpha = 0.45f), style = MaterialTheme.typography.labelSmall)
+                Text(
+                    "${bindings.labelFor(ControllerAction.ToggleControls)} 控制栏 · ${bindings.labelFor(ControllerAction.OpenContents)} 目录",
+                    color = foreground.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.weight(1f), maxLines = 1,
+                    textAlign = TextAlign.End, overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         if (chrome && panel == null) {
             Surface(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(), tonalElevation = 6.dp, shadowElevation = 3.dp) {
-                Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onClose, modifier = Modifier.focusRequester(toolbarFocus)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回书库") }
+                Row(
+                    Modifier.windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top),
+                    ).padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onClose, enabled = !obscured, modifier = Modifier.focusRequester(toolbarFocus)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回书库") }
                     Text(content.book.title, Modifier.weight(1f), maxLines = 1)
-                    IconButton(onClick = { panel = ReaderPanel.Contents }) { Icon(Icons.Default.Menu, "章节目录") }
-                    IconButton(onClick = { panel = ReaderPanel.Settings }) { Icon(Icons.Default.Settings, "阅读设置") }
-                    IconButton(onClick = { chrome = false }) { Icon(Icons.Default.Close, "隐藏控制栏") }
+                    IconButton(onClick = { panel = ReaderPanel.Contents }, enabled = !obscured) { Icon(Icons.Default.Menu, "章节目录") }
+                    IconButton(onClick = onOpenSettings, enabled = !obscured) { Icon(Icons.Default.Settings, "阅读设置") }
+                    IconButton(onClick = { chrome = false }, enabled = !obscured) { Icon(Icons.Default.Close, "隐藏控制栏") }
                 }
             }
-            Surface(modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp), shape = MaterialTheme.shapes.extraLarge, tonalElevation = 6.dp) {
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                    .padding(12.dp),
+                shape = MaterialTheme.shapes.extraLarge,
+                tonalElevation = 6.dp,
+            ) {
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    TextButton(onClick = { changePage(-1) }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Text("上一页") }
-                    TextButton(onClick = { changePage(1) }) { Text("下一页"); Icon(Icons.AutoMirrored.Filled.ArrowForward, null) }
+                    TextButton(onClick = { changePage(-1) }, enabled = !obscured) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Text("上一页") }
+                    TextButton(onClick = { changePage(1) }, enabled = !obscured) { Text("下一页"); Icon(Icons.AutoMirrored.Filled.ArrowForward, null) }
                 }
             }
         }
         if (panel != null) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                 when (panel) {
-                    ReaderPanel.Contents -> ContentsPanel(content, chapter, onClose = { panel = null }) {
+                    ReaderPanel.Contents -> ContentsPanel(content, chapter, enabled = !obscured, onClose = { panel = null }) {
                         chapter = it; anchor = 0; seekEnd = false
                         onProgress(ReadingProgress(chapter, 0, 0))
                         panel = null
                     }
-                    ReaderPanel.Settings -> SettingsPanel(fontSize, paperStyle, onFontSize, onPaperStyle) { panel = null }
                     null -> Unit
                 }
             }
@@ -287,48 +324,26 @@ fun ReaderScreen(
 }
 
 @Composable
-private fun PanelHeader(title: String, onClose: () -> Unit) {
+private fun PanelHeader(title: String, enabled: Boolean, onClose: () -> Unit) {
     val requester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { requester.requestFocus() }
+    LaunchedEffect(enabled) { if (enabled) requester.requestFocus() }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
-        TextButton(onClick = onClose, modifier = Modifier.focusRequester(requester)) { Text("返回阅读  B") }
+        TextButton(onClick = onClose, enabled = enabled, modifier = Modifier.focusRequester(requester)) { Text("返回阅读  B") }
     }
 }
 
 @Composable
-private fun ContentsPanel(content: BookContent, selected: Int, onClose: () -> Unit, onSelect: (Int) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 16.dp)) {
-        PanelHeader("章节目录", onClose)
+private fun ContentsPanel(content: BookContent, selected: Int, enabled: Boolean, onClose: () -> Unit, onSelect: (Int) -> Unit) {
+    Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 32.dp, vertical = 16.dp)) {
+        PanelHeader("章节目录", enabled, onClose)
         val scroll = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = selected)
         LazyColumn(Modifier.fillMaxWidth().weight(1f), state = scroll, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             itemsIndexed(content.chapters) { index, chapter ->
-                OutlinedButton(onClick = { onSelect(index) }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { onSelect(index) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
                     Text("${if (index == selected) "●  " else ""}${index + 1}. ${chapter.title}", Modifier.fillMaxWidth())
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun SettingsPanel(fontSize: Float, paperStyle: PaperStyle, onFontSize: (Float) -> Unit, onPaperStyle: (PaperStyle) -> Unit, onClose: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        PanelHeader("阅读设置", onClose)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("正文字号", Modifier.width(100.dp))
-            OutlinedButton(onClick = { onFontSize(fontSize - 2) }, enabled = fontSize > 14f) { Text("A−") }
-            Text("${fontSize.roundToInt()} sp")
-            OutlinedButton(onClick = { onFontSize(fontSize + 2) }, enabled = fontSize < 32f) { Text("A+") }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("阅读背景", Modifier.width(100.dp))
-            PaperStyle.entries.forEach { style ->
-                FilterChip(selected = style == paperStyle, onClick = { onPaperStyle(style) }, label = { Text(style.label) })
-            }
-        }
-        HorizontalDivider()
-        Text("L1 / R1 翻页  ·  L2 / R2 切换章节  ·  X 显示控制栏  ·  Y 目录", style = MaterialTheme.typography.bodyMedium)
-        Text("字号和背景自动保存。调整字号后保持当前段落；阅读时保持屏幕常亮。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

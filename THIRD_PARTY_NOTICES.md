@@ -17,6 +17,19 @@ Files: `gradlew`, `gradlew.bat`, and `gradle/wrapper/gradle-wrapper.jar`.
 The startup scripts include project-local cache defaults. These modifications
 are part of this repository; the upstream Apache 2.0 terms still apply.
 
+## Catppuccin colors
+
+The Latte, Frappé, Macchiato, and Mocha theme colors in
+`app/src/main/java/io/github/odinreader/ui/Theme.kt` come from
+[Catppuccin Palette v1.8.0](https://github.com/catppuccin/palette/tree/v1.8.0)
+(commit `07d02aa110ef9eb7e7427afca5c73ba9cf7f8ebd`).
+
+- Copyright (c) 2021 Catppuccin.
+- License: MIT. The complete license is included in
+  [licenses/Catppuccin-LICENSE.txt](licenses/Catppuccin-LICENSE.txt).
+- Material 3 role assignments are adapted for Odin Reader; palette values are
+  preserved. System theme selects Latte in light mode and Mocha in dark mode.
+
 ## Build dependencies
 
 AndroidX, Jetpack Compose, Kotlin, Kotlin coroutines, JUnit, and Android test
