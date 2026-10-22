@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
@@ -43,12 +44,16 @@ import io.github.odinreader.input.ControllerAction
 import io.github.odinreader.input.ControllerBindings
 import io.github.odinreader.reader.Page
 import io.github.odinreader.reader.Paginator
+import io.github.odinreader.reader.ReaderFontSelection
+import io.github.odinreader.reader.ReaderFonts
+import io.github.odinreader.reader.ReaderTypography
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private enum class ReaderPanel { Contents }
-private data class LayoutKey(val chapter: Int, val width: Int, val height: Int, val textSize: Float)
-private data class ReaderLayout(val key: LayoutKey, val pages: List<Page>, val index: Int, val anchorOffset: Int)
+private data class LayoutKey(val chapter: Int, val width: Int, val height: Int, val textSize: Float, val fonts: ReaderFontSelection)
+private data class ReaderLayout(val key: LayoutKey, val pages: List<Page>, val index: Int, val anchorOffset: Int, val typography: ReaderTypography)
+private data class PageTextKey(val chapter: Int, val start: Int, val end: Int, val fonts: ReaderFontSelection)
 
 @SuppressLint("InlinedApi") // SIMPLE is an inlined integer, safe on API 28.
 @Composable
@@ -56,12 +61,14 @@ fun ReaderScreen(
     content: BookContent,
     initialProgress: ReadingProgress,
     fontSize: Float,
+    readerFonts: ReaderFontSelection,
     paperStyle: PaperStyle,
     bindings: ControllerBindings,
     obscured: Boolean,
     onOpenSettings: () -> Unit,
     onNavigationModeChanged: (Boolean) -> Unit,
     onBackgroundChanged: (Color?) -> Unit,
+    onReadingVisible: (Boolean) -> Unit,
     onProgress: (ReadingProgress) -> Unit,
     onClose: () -> Unit,
     onActionReady: (((ControllerAction) -> Boolean)?) -> Unit,
@@ -78,6 +85,7 @@ fun ReaderScreen(
     val focusManager = LocalFocusManager.current
     val toolbarFocus = remember { FocusRequester() }
     val view = LocalView.current
+    val context = LocalContext.current
     DisposableEffect(view) {
         val previous = view.keepScreenOn
         view.keepScreenOn = true
@@ -114,13 +122,14 @@ fun ReaderScreen(
         return true
     }
     fun changePage(direction: Int): Boolean {
-        val current = layout?.takeIf { it.key.chapter == chapter } ?: return true
+        val current = layout?.takeIf { it.key.chapter == chapter && it.key.fonts == readerFonts } ?: return true
         val next = current.index + direction
         when {
             next in current.pages.indices -> {
                 anchor = current.pages[next].startOffset
                 layout = current.copy(index = next, anchorOffset = anchor)
-                onProgress(ReadingProgress(chapter, next, anchor))
+                onProgress(ReadingProgress(chapter, next, anchor,
+                    completed = chapter == content.chapters.lastIndex && next == current.pages.lastIndex))
             }
             direction > 0 && chapter < content.chapters.lastIndex -> {
                 chapter++
@@ -168,6 +177,7 @@ fun ReaderScreen(
         onDispose {
             onActionReady(null)
             onBackgroundChanged(null)
+            onReadingVisible(false)
         }
     }
     LaunchedEffect(chrome, panel, obscured) {
@@ -190,24 +200,27 @@ fun ReaderScreen(
                 val widthPx = with(density) { pageWidth.roundToPx() }.coerceAtLeast(1)
                 val heightPx = with(density) { maxHeight.roundToPx() }.coerceAtLeast(1)
                 val textSizePx = with(density) { fontSize.sp.toPx() }
-                val key = LayoutKey(chapter, widthPx, heightPx, textSizePx)
+                val key = LayoutKey(chapter, widthPx, heightPx, textSizePx, readerFonts)
                 val text = content.chapters[chapter].text
                 LaunchedEffect(key) {
                     layout = null
                     val target = anchor
                     val end = seekEnd
+                    val typography = ReaderFonts.load(context, readerFonts)
                     val pages = withContext(Dispatchers.Default) {
-                        Paginator.paginate(text, widthPx, heightPx, textSizePx)
+                        Paginator.paginate(text, widthPx, heightPx, textSizePx, typography = typography)
                     }
                     val index = if (end) pages.lastIndex else Paginator.pageIndexAtOffset(pages, target)
                     anchor = if (end) pages[index].startOffset else target.coerceIn(0, text.length)
                     seekEnd = false
-                    layout = ReaderLayout(key, pages, index, anchor)
+                    layout = ReaderLayout(key, pages, index, anchor, typography)
                 }
                 val active = layout?.takeIf { it.key == key }
+                SideEffect { onReadingVisible(active != null && panel == null && !obscured) }
                 LaunchedEffect(active) {
                     active?.let {
-                        onProgress(ReadingProgress(it.key.chapter, it.index, it.anchorOffset))
+                        onProgress(ReadingProgress(it.key.chapter, it.index, it.anchorOffset,
+                            completed = it.key.chapter == content.chapters.lastIndex && it.index == it.pages.lastIndex))
                     }
                 }
                 val flipPage by rememberUpdatedState<(Int) -> Unit> { if (!obscured) changePage(it) }
@@ -221,7 +234,10 @@ fun ReaderScreen(
                             includeFontPadding = false
                             setFallbackLineSpacing(true)
                             isElegantTextHeight = true
-                            if (android.os.Build.VERSION.SDK_INT >= 35) setUseBoundsForWidth(true)
+                            if (android.os.Build.VERSION.SDK_INT >= 35) {
+                                setUseBoundsForWidth(true)
+                                setLocalePreferredLineHeightForMinimumUsed(true)
+                            }
                             setPadding(0, 0, 0, 0)
                             setLineSpacing(0f, 1.65f)
                             breakStrategy = android.graphics.text.LineBreaker.BREAK_STRATEGY_SIMPLE
@@ -253,15 +269,26 @@ fun ReaderScreen(
                             ) { change, amount -> change.consume(); dragDistance += amount }
                         },
                     update = { textView ->
+                        active?.let {
+                            if (textView.typeface !== it.typography.englishTypeface) textView.typeface = it.typography.englishTypeface
+                        }
                         textView.setTextSize(TypedValue.COMPLEX_UNIT_PX, textSizePx)
                         textView.setTextColor(foreground.toArgb())
-                        val pageText = active?.let { it.pages[it.index].text } ?: ""
-                        if (textView.text.toString() != pageText) textView.text = pageText
+                        val page = active?.let { it.pages[it.index] }
+                        val pageText = page?.text ?: ""
+                        val renderedKey = if (active != null && page != null)
+                            PageTextKey(active.key.chapter, page.startOffset, page.endOffset, active.key.fonts) else null
+                        // The same span rule and chapter context are used by StaticLayout.
+                        if (textView.text.toString() != pageText || textView.tag != renderedKey) {
+                            textView.text = if (active != null && page != null)
+                                active.typography.style(text, page.startOffset, page.endOffset) else ""
+                            textView.tag = renderedKey
+                        }
                     },
                 )
                 if (active == null) CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
-            val active = layout?.takeIf { it.key.chapter == chapter }
+            val active = layout?.takeIf { it.key.chapter == chapter && it.key.fonts == readerFonts }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
                     "${bindings.labelFor(ControllerAction.PreviousPage)} 上一页 · ${bindings.labelFor(ControllerAction.NextPage)} 下一页",

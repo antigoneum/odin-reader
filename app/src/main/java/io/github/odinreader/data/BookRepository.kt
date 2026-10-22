@@ -19,6 +19,7 @@ class BookRepository(context: Context) {
     private val appContext = context.applicationContext
     private val libraryDirectory = File(appContext.filesDir, "books")
     private val progressPreferences = appContext.getSharedPreferences("reading_progress", Context.MODE_PRIVATE)
+    val readingHistory = ReadingHistoryStore(appContext)
 
     fun listBooks(): List<Book> {
         val imported = libraryDirectory.listFiles().orEmpty()
@@ -135,24 +136,17 @@ class BookRepository(context: Context) {
         }
     }
 
-    fun getProgress(id: String): ReadingProgress = ReadingProgress(
-        chapterIndex = progressPreferences.getInt("$id.chapter", 0).coerceAtLeast(0),
-        pageIndex = progressPreferences.getInt("$id.page", 0).coerceAtLeast(0),
-        charOffset = progressPreferences.getInt("$id.offset", 0).coerceAtLeast(0),
-    )
+    fun getProgress(id: String): ReadingProgress = readingHistory.getRecord(id)?.progress ?: ReadingProgress()
 
     fun saveProgress(id: String, progress: ReadingProgress) {
-        progressPreferences.edit()
-            .putInt("$id.chapter", progress.chapterIndex.coerceAtLeast(0))
-            .putInt("$id.page", progress.pageIndex.coerceAtLeast(0))
-            .putInt("$id.offset", progress.charOffset.coerceAtLeast(0))
-            .apply()
+        readingHistory.updateProgress(id, progress, System.currentTimeMillis())
     }
 
     /** The bundled sample is permanent and cannot be removed. */
     fun deleteBook(id: String) {
         if (id == DemoBook.ID) return
         check(bookDirectory(id).let { !it.exists() || it.deleteRecursively() }) { "无法删除书籍" }
+        readingHistory.deleteBook(id)
         progressPreferences.edit().remove("$id.chapter").remove("$id.page").remove("$id.offset").apply()
     }
 

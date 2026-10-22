@@ -8,3 +8,9 @@
 gradlew text eol=lf
 *.bat text eol=crlf
 *.jar binary
+*.ttf binary
+*.otf binary
+# Preserve upstream font license text exactly, including its original whitespace.
+app/src/main/assets/fonts/licenses/*.txt -text -whitespace
+licenses/*-OFL.txt -text -whitespace
+licenses/Nerd-Fonts-LICENSES.txt -text -whitespace

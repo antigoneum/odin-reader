@@ -2,6 +2,7 @@ package io.github.odinreader.reader
 
 import android.annotation.SuppressLint
 import android.graphics.Typeface
+import android.graphics.Paint
 import android.os.Build
 import android.text.Layout
 import android.util.Log
@@ -11,6 +12,7 @@ import android.view.View
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -65,6 +67,73 @@ class PaginatorDeviceTest {
         assertEquals(text, reflowed.joinToString("") { it.text })
     }
 
+    @Test
+    fun bundledFontsRenderMixedScriptsWithoutLostOrClippedText() {
+        val text = ("山风吹过书页，繁體漢字與中文標點：“你好，世界！”\n" +
+            "The quick brown fox reads 0123456789. JetBrains Nerd: \uE0B0 \uF120 \uF013. " +
+            "书本📚 旅行👩‍🚀 星光✨。\n\n").repeat(12)
+        for (font in ReaderFont.entries) {
+            val face = runBlocking { ReaderFonts.load(context, font) }
+            if (font == ReaderFont.JetBrainsMono) {
+                val paint = Paint().apply { typeface = face }
+                for (icon in listOf("\uE0B0", "\uF120", "\uF013")) {
+                    assertTrue("The bundled JetBrains face must retain Nerd Font icons", paint.hasGlyph(icon))
+                }
+            }
+            for (size in listOf(14f, 20f, 32f)) {
+                assertRenderedPages(text, widthPx = 1100, heightPx = 620,
+                    textSizePx = sp(size), case = "${font.id} $size sp", typeface = face)
+            }
+        }
+    }
+
+    @Test
+    fun changingFontKeepsTheSameCharacterWithinItsReflowedPage() {
+        val text = ("沿着山脊去看海，阅读让旅途变得辽阔。A quiet page holds a whole world. 📖\n\n").repeat(65)
+        val original = Paginator.paginate(text, 1100, 620, sp(20f))
+        val offset = original[original.size / 2].startOffset + 3
+        for (font in ReaderFont.entries) {
+            val face = runBlocking { ReaderFonts.load(context, font) }
+            val pages = Paginator.paginate(text, 1100, 620, sp(20f), typeface = face)
+            val page = pages[Paginator.pageIndexAtOffset(pages, offset)]
+            assertTrue("${font.id}: restored page must contain the original character", offset in page.startOffset until page.endOffset)
+            assertEquals(text, pages.joinToString("") { it.text })
+        }
+    }
+
+    @Test
+    fun independentChineseAndEnglishFontsFitAndKeepTheSameCharacter() {
+        val text = ("中文与English 123混排，繁體漢字：‘阅读’。\uD840\uDC00\uFE00 " +
+            "A reader's ‘quiet’ page, cafe\u0301 and Nerd \uF120 \uE0B0. 👩‍🚀📚\n\n").repeat(16)
+        val original = Paginator.paginate(text, 1100, 620, sp(20f))
+        val anchor = original[original.size / 2].startOffset + 3
+        for (chinese in listOf(ReaderFont.LxgwWenKai, ReaderFont.NotoSerif, ReaderFont.NotoSans)) {
+            for (english in listOf(ReaderFont.JetBrainsMono, ReaderFont.Literata)) {
+                val selection = ReaderFontSelection(chinese, english)
+                val typography = runBlocking { ReaderFonts.load(context, selection) }
+                for (size in listOf(14f, 20f, 32f)) {
+                    val case = "${chinese.id} + ${english.id} $size sp"
+                    assertRenderedPages(text, 1100, 620, sp(size), case, typography = typography)
+                    val pages = Paginator.paginate(text, 1100, 620, sp(size), typography = typography)
+                    val page = pages[Paginator.pageIndexAtOffset(pages, anchor)]
+                    assertTrue("$case: the same character must stay in its restored page",
+                        anchor in page.startOffset until page.endOffset)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun mixedTypefaceSpansStayConsistentAcrossMeasurementChunksAndRenderedPages() {
+        val text = ("山海之间“慢慢阅读”，中文與English文字交错。 " +
+            "English ‘quoted’ words, cafe\u0301, Nerd \uF120 and emoji 👩‍🚀📚. ").repeat(430)
+        assertTrue(text.length > 32_768)
+        val typography = runBlocking {
+            ReaderFonts.load(context, ReaderFontSelection(ReaderFont.LxgwWenKai, ReaderFont.JetBrainsMono))
+        }
+        assertRenderedPages(text, 1100, 620, sp(20f), "mixed font chunk boundaries", typography = typography)
+    }
+
     private fun sp(value: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value, context.resources.displayMetrics)
 
@@ -74,8 +143,10 @@ class PaginatorDeviceTest {
         heightPx: Int,
         textSizePx: Float,
         case: String,
+        typeface: Typeface = Typeface.SERIF,
+        typography: ReaderTypography? = null,
     ) {
-        val pages = Paginator.paginate(text, widthPx, heightPx, textSizePx)
+        val pages = Paginator.paginate(text, widthPx, heightPx, textSizePx, typeface = typeface, typography = typography)
         assertEquals("$case: pagination must preserve every UTF-16 code unit", text, pages.joinToString("") { it.text })
         assertEquals(0, pages.first().startOffset)
         assertEquals(text.length, pages.last().endOffset)
@@ -83,7 +154,10 @@ class PaginatorDeviceTest {
             if (index > 0) assertEquals(pages[index - 1].endOffset, page.startOffset)
             assertFalse("$case: page $index must not begin with half a surrogate", page.text.firstOrNull()?.isLowSurrogate() == true)
             assertFalse("$case: page $index must not end with half a surrogate", page.text.lastOrNull()?.isHighSurrogate() == true)
-            val measurement = measureTextView(page.text, widthPx, heightPx, textSizePx)
+            val display = typography?.style(text, page.startOffset, page.endOffset) ?: page.text
+            assertEquals("$case: applying fonts must preserve page characters", page.text, display.toString())
+            val measurement = measureTextView(display, widthPx, heightPx, textSizePx,
+                typography?.englishTypeface ?: typeface)
             assertEquals("$case: TextView must lay out the entire supplied page", page.text.length, measurement.finalLineEnd)
             // A trailing newline can create an extra empty line. Its blank height is not a clipped glyph.
             assertTrue(
@@ -96,15 +170,18 @@ class PaginatorDeviceTest {
 
     @SuppressLint("InlinedApi") // BREAK_STRATEGY_SIMPLE is the compile-time integer 0.
     @Suppress("DEPRECATION")
-    private fun measureTextView(text: String, widthPx: Int, heightPx: Int, textSizePx: Float): TextMeasurement {
+    private fun measureTextView(text: CharSequence, widthPx: Int, heightPx: Int, textSizePx: Float, face: Typeface): TextMeasurement {
         var result: TextMeasurement? = null
         instrumentation.runOnMainSync {
             val view = TextView(context).apply {
-                typeface = Typeface.SERIF
+                typeface = face
                 includeFontPadding = false
                 setFallbackLineSpacing(true)
                 isElegantTextHeight = true
-                if (Build.VERSION.SDK_INT >= 35) setUseBoundsForWidth(true)
+                if (Build.VERSION.SDK_INT >= 35) {
+                    setUseBoundsForWidth(true)
+                    setLocalePreferredLineHeightForMinimumUsed(true)
+                }
                 setPadding(0, 0, 0, 0)
                 setLineSpacing(0f, 1.65f)
                 breakStrategy = android.graphics.text.LineBreaker.BREAK_STRATEGY_SIMPLE

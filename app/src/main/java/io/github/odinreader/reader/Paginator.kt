@@ -19,7 +19,7 @@ data class Page(
  * Measures real font glyphs, so Chinese, Latin text, punctuation and explicit
  * paragraph breaks all paginate using their actual displayed widths.
  *
- * The renderer should use SERIF, no font padding, SIMPLE line breaking, no
+ * The renderer must use the same typeface, no font padding, SIMPLE line breaking, no
  * hyphenation, and the same text size and line-spacing multiplier. A TextView
  * inside AndroidView provides the closest match to these Android measurements.
  * Call on a worker dispatcher; text layout can be expensive for large chapters.
@@ -35,6 +35,8 @@ object Paginator {
         heightPx: Int,
         textSizePx: Float,
         lineSpacingMultiplier: Float = 1.65f,
+        typeface: Typeface = Typeface.SERIF,
+        typography: ReaderTypography? = null,
     ): List<Page> {
         require(widthPx > 0) { "Page width must be positive" }
         require(heightPx > 0) { "Page height must be positive" }
@@ -45,7 +47,7 @@ object Paginator {
         if (text.isEmpty()) return listOf(Page(0, 0, ""))
 
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-            typeface = Typeface.SERIF
+            this.typeface = typography?.englishTypeface ?: typeface
             textSize = textSizePx
             isElegantTextHeight = true
         }
@@ -53,7 +55,7 @@ object Paginator {
         var cursor = 0
         while (cursor < text.length) {
             val chunkEnd = chunkEnd(text, cursor)
-            val chunk = text.substring(cursor, chunkEnd)
+            val chunk = typography?.style(text, cursor, chunkEnd) ?: text.substring(cursor, chunkEnd)
             val builder = StaticLayout.Builder.obtain(chunk, 0, chunk.length, paint, widthPx)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
                 .setIncludePad(false)
@@ -62,7 +64,15 @@ object Paginator {
                 .setBreakStrategy(android.graphics.text.LineBreaker.BREAK_STRATEGY_SIMPLE)
                 .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
                 .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
-            if (android.os.Build.VERSION.SDK_INT >= 35) builder.setUseBoundsForWidth(true)
+            if (android.os.Build.VERSION.SDK_INT >= 35) {
+                builder.setUseBoundsForWidth(true)
+                // TextView reserves locale-preferred metrics, even when a shorter
+                // CJK TypefaceSpan overrides the Latin face on a particular line.
+                // Match that minimum here so mixed-font pages cannot gain extra lines.
+                val minimum = Paint.FontMetrics()
+                paint.getFontMetricsForLocale(minimum)
+                builder.setMinimumFontMetrics(minimum)
+            }
             val layout = builder.build()
 
             // At an artificial chunk boundary the last line may be incomplete.

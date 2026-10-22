@@ -30,6 +30,34 @@ The Latte, Frappé, Macchiato, and Mocha theme colors in
 - Material 3 role assignments are adapted for Odin Reader; palette values are
   preserved. System theme selects Latte in light mode and Mocha in dark mode.
 
+## Bundled reader fonts
+
+The files in `app/src/main/assets/fonts/` are unchanged upstream Regular font
+binaries. They are bundled for offline reading, without subsetting, converting,
+or changing the font's internal names. File names in this app are normalized for
+asset lookup. Their upstream copyright and license notices are included both in
+`licenses/` and in the APK at `assets/fonts/licenses/`.
+
+| Font | Upstream version | License notices |
+| --- | --- | --- |
+| JetBrainsMono Nerd Font Regular | JetBrains Mono 2.304, Nerd Fonts 3.5.1 | [JetBrains Mono OFL](licenses/JetBrainsMono-Nerd-OFL.txt), [Nerd Fonts and icon notices](licenses/Nerd-Fonts-LICENSES.txt) |
+| Literata Regular | 3.103 | [Literata OFL](licenses/Literata-OFL.txt) |
+| LXGW WenKai Regular / 霞鹜文楷 | 1.530 | [LXGW WenKai OFL](licenses/LXGWWenKai-OFL.txt) |
+| Noto Serif CJK SC Regular | 2.003 | [Noto Serif CJK OFL](licenses/NotoSerifCJK-OFL.txt) |
+| Noto Sans CJK SC Regular | 2.004 | [Noto Sans CJK OFL](licenses/NotoSansCJK-OFL.txt) |
+
+These fonts are released under the SIL Open Font License 1.1. The Nerd Fonts
+notices additionally preserve its upstream license audit and notices for
+Codicons, Font Awesome, Material Design Icons, Octicons, Pomicons, Powerline
+symbols, and Weather Icons. These remain under their respective licenses as
+stated in the included notices. Odin Reader does not modify the patched font or
+its icon glyphs.
+
+Pinned source commits, direct download URLs, SHA-256 checksums, sizes, and font
+metadata are recorded in [the bundled font manifest](app/src/main/assets/fonts/manifest.json).
+The full CJK fonts are retained so that the app is not limited to the characters
+in its own interface or demo book. See [font asset details](docs/font-assets.md).
+
 ## Build dependencies
 
 AndroidX, Jetpack Compose, Kotlin, Kotlin coroutines, JUnit, and Android test

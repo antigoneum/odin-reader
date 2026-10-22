@@ -34,6 +34,7 @@ import io.github.odinreader.data.ReadingProgress
 import io.github.odinreader.input.ControllerAction
 import io.github.odinreader.input.ControllerButton
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.ExternalResource
@@ -52,11 +53,13 @@ class SettingsUiDeviceTest {
         get() = context.getSharedPreferences("reading_progress", Context.MODE_PRIVATE)
     private lateinit var savedSettings: Map<String, Any?>
     private lateinit var savedProgress: Map<String, Any?>
-    private val settingsKeys = listOf("font_size", "paper_style", "app_theme") +
+    private val historyGuard by lazy { ReadingHistoryTestGuard(context, DemoBook.ID) }
+    private val settingsKeys = listOf("font_size", "reader_font", "reader_font_chinese", "reader_font_english", "paper_style", "app_theme") +
         ControllerButton.entries.map { "binding.${it.name}" }
     private val progressKeys = listOf("chapter", "page", "offset").map { "${DemoBook.ID}.$it" }
     private val isolatedPreferences = object : ExternalResource() {
         override fun before() {
+            historyGuard.before()
             savedSettings = settingsKeys.associateWith { settings.all[it] }
             savedProgress = progressKeys.associateWith { progress.all[it] }
             val editor = settings.edit()
@@ -66,6 +69,7 @@ class SettingsUiDeviceTest {
         }
 
         override fun after() {
+            historyGuard.after()
             restore(settings, savedSettings)
             restore(progress, savedProgress)
         }
@@ -73,6 +77,11 @@ class SettingsUiDeviceTest {
     private val compose = createAndroidComposeRule<MainActivity>()
     @get:Rule
     val rules: TestRule = RuleChain.outerRule(isolatedPreferences).around(compose)
+
+    @Before
+    fun captureReadingModel() {
+        compose.runOnIdle { historyGuard.attachModel(ViewModelProvider(compose.activity)[ReaderViewModel::class.java]) }
+    }
 
     @Test
     fun allFourThemesSaveTheirSelectionAndThemeReadingBackground() {
@@ -172,6 +181,7 @@ class SettingsUiDeviceTest {
             }).fetchSemanticsNodes().isNotEmpty()
         }
         compose.waitForIdle()
+        historyGuard.awaitWrites()
     }
 
     private fun gamepad(code: Int) {

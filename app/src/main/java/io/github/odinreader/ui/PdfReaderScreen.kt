@@ -70,6 +70,7 @@ fun PdfReaderScreen(
     onOpenSettings: () -> Unit,
     onNavigationModeChanged: (Boolean) -> Unit,
     onBackgroundChanged: (Color?) -> Unit,
+    onReadingVisible: (Boolean) -> Unit,
     onProgress: (ReadingProgress) -> Unit,
     onClose: () -> Unit,
     onActionReady: (((ControllerAction) -> Boolean)?) -> Unit,
@@ -153,6 +154,7 @@ fun PdfReaderScreen(
         onDispose {
             onActionReady(null)
             onBackgroundChanged(null)
+            onReadingVisible(false)
         }
     }
     LaunchedEffect(chrome, showPages, obscured) {
@@ -177,6 +179,7 @@ fun PdfReaderScreen(
                 val heightPx = with(density) { maxHeight.roundToPx() }.coerceAtLeast(1)
                 val key = PdfRenderKey(pageIndex, widthPx, heightPx, retry)
                 val active = rendered?.takeIf { it.key == key }
+                SideEffect { onReadingVisible(active != null && !showPages && !obscured) }
                 LaunchedEffect(file, key) {
                     rendered = null
                     renderError = null
@@ -204,7 +207,8 @@ fun PdfReaderScreen(
                     }
                 }
                 LaunchedEffect(active?.key) {
-                    if (active != null) onProgress(ReadingProgress(pageIndex = active.key.page))
+                    if (active != null) onProgress(ReadingProgress(pageIndex = active.key.page,
+                        completed = active.key.page == pageCount - 1))
                 }
                 val fitScale = active?.bitmap?.let { min(widthPx.toFloat() / it.width, heightPx.toFloat() / it.height) } ?: 1f
                 val imageWidth = (active?.bitmap?.width ?: widthPx) * fitScale

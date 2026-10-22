@@ -1,0 +1,192 @@
+{
+  "fonts": [
+    {
+      "file": "jetbrains_mono_nerd_regular.ttf",
+      "name": "JetBrainsMono Nerd Font Regular",
+      "repo": "ryanoasis/nerd-fonts",
+      "commit": "b894ea7803af6aade63d60a4381e006098ec9c4d",
+      "path": "patched-fonts/JetBrainsMono/Ligatures/JetBrainsMonoNerdFont-Regular.ttf",
+      "license": "patched-fonts/JetBrainsMono/Ligatures/OFL.txt",
+      "license_file": "JetBrainsMono-Nerd-OFL.txt",
+      "release": "v3.5.1",
+      "source_url": "https://raw.githubusercontent.com/ryanoasis/nerd-fonts/b894ea7803af6aade63d60a4381e006098ec9c4d/patched-fonts/JetBrainsMono/Ligatures/JetBrainsMonoNerdFont-Regular.ttf",
+      "license_url": "https://raw.githubusercontent.com/ryanoasis/nerd-fonts/b894ea7803af6aade63d60a4381e006098ec9c4d/patched-fonts/JetBrainsMono/Ligatures/OFL.txt",
+      "license_spdx": "OFL-1.1",
+      "size_bytes": 2571596,
+      "sha256": "1c680e8cde9fcf8b88a5605ce8d1fb94dd3fb15841f7ca7bf4c55664855e5611",
+      "modified": false,
+      "font_metadata": {
+        "names": {
+          "1": [
+            "JetBrainsMono NF"
+          ],
+          "2": [
+            "Regular"
+          ],
+          "5": [
+            "Version 2.304; ttfautohint (v1.8.4.7-5d5b);Nerd Fonts 3.5.1"
+          ],
+          "6": [
+            "JetBrainsMonoNF-Regular"
+          ],
+          "16": [
+            "JetBrainsMono Nerd Font",
+            "JetBrainsMono NF"
+          ]
+        },
+        "glyph_count": 12608,
+        "variable": false,
+        "has_cjk_sample": false,
+        "has_ascii_sample": true,
+        "has_nerd_private_use": true
+      }
+    },
+    {
+      "file": "literata_regular.ttf",
+      "name": "Literata Regular",
+      "repo": "googlefonts/literata",
+      "commit": "0c2761b727a1b3a7cffd313c37f0f5163dfc7a63",
+      "path": "fonts/ttf/Literata-Regular.ttf",
+      "license": "OFL.txt",
+      "license_file": "Literata-OFL.txt",
+      "source_url": "https://raw.githubusercontent.com/googlefonts/literata/0c2761b727a1b3a7cffd313c37f0f5163dfc7a63/fonts/ttf/Literata-Regular.ttf",
+      "license_url": "https://raw.githubusercontent.com/googlefonts/literata/0c2761b727a1b3a7cffd313c37f0f5163dfc7a63/OFL.txt",
+      "license_spdx": "OFL-1.1",
+      "size_bytes": 319964,
+      "sha256": "0390890de9bb9d5862a6ba4125b82c61792ccc3d66b63e73eee75c1a16fcd208",
+      "modified": false,
+      "font_metadata": {
+        "names": {
+          "1": [
+            "Literata"
+          ],
+          "2": [
+            "Regular"
+          ],
+          "5": [
+            "Version 3.103; ttfautohint (v1.8.4.7-5d5b);gftools[0.9.29]"
+          ],
+          "6": [
+            "Literata-Regular"
+          ]
+        },
+        "glyph_count": 1789,
+        "variable": false,
+        "has_cjk_sample": false,
+        "has_ascii_sample": true,
+        "has_nerd_private_use": false
+      }
+    },
+    {
+      "file": "lxgw_wenkai_regular.ttf",
+      "name": "LXGW WenKai Regular",
+      "repo": "lxgw/LxgwWenKai",
+      "commit": "b4ad8194e6aff48f682992c2b5541beeff49df82",
+      "path": "fonts/TTF/LXGWWenKai-Regular.ttf",
+      "license": "OFL.txt",
+      "license_file": "LXGWWenKai-OFL.txt",
+      "source_url": "https://raw.githubusercontent.com/lxgw/LxgwWenKai/b4ad8194e6aff48f682992c2b5541beeff49df82/fonts/TTF/LXGWWenKai-Regular.ttf",
+      "license_url": "https://raw.githubusercontent.com/lxgw/LxgwWenKai/b4ad8194e6aff48f682992c2b5541beeff49df82/OFL.txt",
+      "license_spdx": "OFL-1.1",
+      "size_bytes": 25928940,
+      "sha256": "2d73eea94ad808999d90c0000c239a84a33b09d4bc6ab6c5b8bbf1eda8a7fc8b",
+      "modified": false,
+      "font_metadata": {
+        "names": {
+          "1": [
+            "霞鶩文楷",
+            "LXGW WenKai",
+            "霞鹜文楷"
+          ],
+          "2": [
+            "Regular"
+          ],
+          "5": [
+            "Version 1.530; October 18, 2026"
+          ],
+          "6": [
+            "LXGWWenKai-Regular"
+          ]
+        },
+        "glyph_count": 47336,
+        "variable": false,
+        "has_cjk_sample": true,
+        "has_ascii_sample": true,
+        "has_nerd_private_use": false
+      }
+    },
+    {
+      "file": "noto_serif_sc_regular.otf",
+      "name": "Noto Serif CJK SC Regular",
+      "repo": "notofonts/noto-cjk",
+      "commit": "f8d157532fbfaeda587e826d4cd5b21a49186f7c",
+      "path": "Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Regular.otf",
+      "license": "Serif/LICENSE",
+      "license_file": "NotoSerifCJK-OFL.txt",
+      "source_url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Regular.otf",
+      "license_url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Serif/LICENSE",
+      "license_spdx": "OFL-1.1",
+      "size_bytes": 24543080,
+      "sha256": "2a2eae2628df83556c54018c41e20fa532c1b862c5256ae8b3f23feb918d12ca",
+      "modified": false,
+      "font_metadata": {
+        "names": {
+          "1": [
+            "Noto Serif CJK SC"
+          ],
+          "2": [
+            "Regular"
+          ],
+          "5": [
+            "Version 2.003;hotconv 1.1.1;makeotfexe 2.6.0"
+          ],
+          "6": [
+            "NotoSerifCJKsc-Regular"
+          ]
+        },
+        "glyph_count": 65535,
+        "variable": false,
+        "has_cjk_sample": true,
+        "has_ascii_sample": true,
+        "has_nerd_private_use": false
+      }
+    },
+    {
+      "file": "noto_sans_sc_regular.otf",
+      "name": "Noto Sans CJK SC Regular",
+      "repo": "notofonts/noto-cjk",
+      "commit": "f8d157532fbfaeda587e826d4cd5b21a49186f7c",
+      "path": "Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+      "license": "Sans/LICENSE",
+      "license_file": "NotoSansCJK-OFL.txt",
+      "source_url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+      "license_url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE",
+      "license_spdx": "OFL-1.1",
+      "size_bytes": 16437364,
+      "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+      "modified": false,
+      "font_metadata": {
+        "names": {
+          "1": [
+            "Noto Sans CJK SC"
+          ],
+          "2": [
+            "Regular"
+          ],
+          "5": [
+            "Version 2.004;hotconv 1.0.118;makeotfexe 2.5.65603"
+          ],
+          "6": [
+            "NotoSansCJKsc-Regular"
+          ]
+        },
+        "glyph_count": 65535,
+        "variable": false,
+        "has_cjk_sample": true,
+        "has_ascii_sample": true,
+        "has_nerd_private_use": false
+      }
+    }
+  ],
+  "nerd_additional_notices": "licenses/Nerd-Fonts-LICENSES.txt"
+}

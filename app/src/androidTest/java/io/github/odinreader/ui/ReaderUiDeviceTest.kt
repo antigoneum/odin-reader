@@ -39,6 +39,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.printToLog
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.odinreader.MainActivity
@@ -48,6 +49,7 @@ import io.github.odinreader.data.ReadingProgress
 import io.github.odinreader.input.ControllerButton
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.ExternalResource
@@ -67,9 +69,11 @@ class ReaderUiDeviceTest {
 
     private lateinit var savedProgressValues: Map<String, Any?>
     private lateinit var savedSettingValues: Map<String, Any?>
+    private val historyGuard by lazy { ReadingHistoryTestGuard(context, DemoBook.ID) }
 
     private val isolatedDemoState = object : ExternalResource() {
         override fun before() {
+            historyGuard.before()
             val progress = context.getSharedPreferences(PROGRESS_PREFS, Context.MODE_PRIVATE)
             val settings = context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
             savedProgressValues = progressKeys.associateWith { progress.all[it] }
@@ -84,6 +88,7 @@ class ReaderUiDeviceTest {
             // The inner Compose/Activity rule has already closed the reader and
             // disposed its effects. Restore only these demo/settings keys, not
             // the user's imported books or their reading positions.
+            historyGuard.after()
             restorePreferences(context.getSharedPreferences(PROGRESS_PREFS, Context.MODE_PRIVATE), savedProgressValues)
             restorePreferences(context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE), savedSettingValues)
         }
@@ -93,6 +98,11 @@ class ReaderUiDeviceTest {
 
     @get:Rule
     val rules: TestRule = RuleChain.outerRule(isolatedDemoState).around(compose)
+
+    @Before
+    fun captureReadingModel() {
+        compose.runOnIdle { historyGuard.attachModel(ViewModelProvider(compose.activity)[ReaderViewModel::class.java]) }
+    }
 
     @Test
     fun gamepadPaginationAndChapterBoundaryRoundTrip() {
@@ -385,6 +395,7 @@ class ReaderUiDeviceTest {
             counterOrNull()?.let { it.chapter == chapter && it.page == page } == true
         }
         compose.waitForIdle()
+        historyGuard.awaitWrites()
         return checkNotNull(counterOrNull())
     }
 
@@ -447,7 +458,7 @@ class ReaderUiDeviceTest {
         const val PROGRESS_PREFS = "reading_progress"
         const val SETTINGS_PREFS = "reader_settings"
         val progressKeys = listOf(DemoBook.ID + ".chapter", DemoBook.ID + ".page", DemoBook.ID + ".offset")
-        val settingKeys = listOf("font_size", "paper_style", "app_theme") +
+        val settingKeys = listOf("font_size", "reader_font", "reader_font_chinese", "reader_font_english", "paper_style", "app_theme") +
             ControllerButton.entries.map { "binding.${it.name}" }
         val COUNTER = Regex("""第 (\d+) / (\d+) 章 · (\d+) / (\d+) 页""")
         val pageCounterMatcher = SemanticsMatcher("reader chapter/page counter") { node ->

@@ -18,12 +18,15 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.odinreader.MainActivity
 import io.github.odinreader.data.Book
 import io.github.odinreader.data.BookRepository
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.ExternalResource
@@ -32,6 +35,7 @@ import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.runBlocking
 
 /** Imports and deletes only its own generated PDF, leaving existing books/settings intact. */
 @RunWith(AndroidJUnit4::class)
@@ -40,6 +44,7 @@ class PdfReaderUiDeviceTest {
         get() = InstrumentationRegistry.getInstrumentation().targetContext
     private lateinit var fixture: File
     private lateinit var book: Book
+    private var testModel: ReaderViewModel? = null
     private val isolatedBook = object : ExternalResource() {
         override fun before() {
             fixture = File(context.cacheDir, "PDF-device-${UUID.randomUUID()}.pdf")
@@ -61,6 +66,7 @@ class PdfReaderUiDeviceTest {
         }
 
         override fun after() {
+            runBlocking { testModel?.awaitHistoryWrites() }
             if (::book.isInitialized) BookRepository(context).deleteBook(book.id)
             if (::fixture.isInitialized) fixture.delete()
         }
@@ -68,6 +74,11 @@ class PdfReaderUiDeviceTest {
     private val compose = createAndroidComposeRule<MainActivity>()
     @get:Rule
     val rules: TestRule = RuleChain.outerRule(isolatedBook).around(compose)
+
+    @Before
+    fun captureReadingModel() {
+        compose.runOnIdle { testModel = ViewModelProvider(compose.activity)[ReaderViewModel::class.java] }
+    }
 
     @Test
     fun pdfPagesRenderWithControlsZoomAndPersistentPosition() {
@@ -78,6 +89,9 @@ class PdfReaderUiDeviceTest {
         awaitPage(2)
         gamepad(KeyEvent.KEYCODE_BUTTON_R1)
         awaitPage(3)
+        val finished = requireNotNull(BookRepository(context).readingHistory.getRecord(book.id))
+        assertTrue(finished.progress.completed)
+        assertEquals(1.0, finished.progressFraction, 0.0)
         gamepad(KeyEvent.KEYCODE_BUTTON_L1)
         awaitPage(2)
 
@@ -120,6 +134,7 @@ class PdfReaderUiDeviceTest {
             compose.onAllNodesWithText("第 $page / 3 页").fetchSemanticsNodes().isNotEmpty()
         }
         compose.waitForIdle()
+        runBlocking { testModel?.awaitHistoryWrites() }
     }
 
     private fun gamepad(code: Int) {

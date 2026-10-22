@@ -55,6 +55,8 @@ import androidx.compose.ui.unit.dp
 import io.github.odinreader.input.ControllerAction
 import io.github.odinreader.input.ControllerBindings
 import io.github.odinreader.input.ControllerButton
+import io.github.odinreader.reader.ReaderFont
+import io.github.odinreader.reader.ReaderFontSelection
 import kotlin.math.roundToInt
 
 private val SettingsControlShape = RoundedCornerShape(14.dp)
@@ -64,10 +66,13 @@ private val SettingsControlShape = RoundedCornerShape(14.dp)
 @Composable
 fun SettingsScreen(
     fontSize: Float,
+    readerFonts: ReaderFontSelection,
     paperStyle: PaperStyle,
     theme: AppTheme,
     bindings: ControllerBindings,
     onFontSize: (Float) -> Unit,
+    onChineseFont: (ReaderFont) -> Unit,
+    onEnglishFont: (ReaderFont) -> Unit,
     onPaperStyle: (PaperStyle) -> Unit,
     onTheme: (AppTheme) -> Unit,
     onBinding: (ControllerButton, ControllerAction) -> Unit,
@@ -82,11 +87,21 @@ fun SettingsScreen(
     backFocusRequester: FocusRequester? = null,
 ) {
     var editingButton by remember { mutableStateOf<ControllerButton?>(null) }
+    var choosingFont by remember { mutableStateOf(false) }
+    var restoreFontFocus by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val backFocus = backFocusRequester ?: remember { FocusRequester() }
+    val fontPickerFocus = remember { FocusRequester() }
     val settingsScroll = rememberLazyListState()
     val closeCurrent by rememberUpdatedState {
-        if (editingButton != null) editingButton = null else onClose()
+        when {
+            editingButton != null -> editingButton = null
+            choosingFont -> {
+                choosingFont = false
+                restoreFontFocus = true
+            }
+            else -> onClose()
+        }
     }
     val latestAction by rememberUpdatedState<(ControllerAction) -> Boolean> { action ->
         when (action) {
@@ -106,7 +121,13 @@ fun SettingsScreen(
         onDispose { onActionReady(null) }
     }
     BackHandler { closeCurrent() }
-    LaunchedEffect(editingButton, backFocus) { backFocus.requestFocus() }
+    LaunchedEffect(editingButton, choosingFont, backFocus) {
+        if (restoreFontFocus && !choosingFont) {
+            // LazyColumn attaches its items during measurement. Scroll first;
+            // the entry's own effect restores focus once it is composed.
+            settingsScroll.scrollToItem(1)
+        } else backFocus.requestFocus()
+    }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(
@@ -117,7 +138,8 @@ fun SettingsScreen(
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    editingButton?.let { "配置 ${it.label} 按键" } ?: title,
+                    editingButton?.let { "配置 ${it.label} 按键" }
+                        ?: if (choosingFont) "选择正文字体" else title,
                     Modifier.weight(1f),
                     style = MaterialTheme.typography.headlineSmall,
                 )
@@ -129,14 +151,21 @@ fun SettingsScreen(
                         .heightIn(min = 48.dp).controllerFocusRing(SettingsControlShape),
                 ) {
                     Text(when {
-                        editingButton != null -> "返回设置  B"
+                        editingButton != null || choosingFont -> "返回设置  B"
                         embedded -> "返回书库  B"
                         else -> "完成  B"
                     })
                 }
             }
             val selectedButton = editingButton
-            if (selectedButton != null) {
+            if (choosingFont) {
+                ReaderFontPicker(
+                    selection = readerFonts,
+                    onChineseFont = onChineseFont,
+                    onEnglishFont = onEnglishFont,
+                    backFocus = backFocus,
+                )
+            } else if (selectedButton != null) {
                 Text(
                     "为 ${selectedButton.label} 选择阅读功能。菜单中的确认、返回与方向导航保持默认。",
                     style = MaterialTheme.typography.bodyMedium,
@@ -194,6 +223,30 @@ fun SettingsScreen(
                                     shape = SettingsControlShape,
                                     modifier = Modifier.heightIn(min = 48.dp).controllerFocusRing(SettingsControlShape),
                                 ) { Text("A+") }
+                            }
+                        }
+                        item(key = "reader-font") {
+                            LaunchedEffect(restoreFontFocus) {
+                                if (restoreFontFocus) {
+                                    fontPickerFocus.requestFocus()
+                                    restoreFontFocus = false
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = { choosingFont = true },
+                                shape = SettingsControlShape,
+                                modifier = Modifier.fillMaxWidth().testTag("reader-font-picker")
+                                    .focusRequester(fontPickerFocus)
+                                    .heightIn(min = 76.dp).controllerFocusRing(SettingsControlShape),
+                            ) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text("中文字体 · ${readerFonts.chinese.label}", style = MaterialTheme.typography.titleMedium)
+                                    Text("英文字体 · ${readerFonts.english.label}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Text("更换")
                             }
                         }
                         item(key = "paper") {

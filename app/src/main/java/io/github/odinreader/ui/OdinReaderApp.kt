@@ -41,12 +41,19 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var readerNavigationMode by remember { mutableStateOf(true) }
     var readerBackground by remember { mutableStateOf<Color?>(null) }
+    var visibleReaderBook by remember { mutableStateOf<String?>(null) }
     var settingsAction by remember { mutableStateOf<((ControllerAction) -> Boolean)?>(null) }
     var readerAction by remember { mutableStateOf<((ControllerAction) -> Boolean)?>(null) }
     val focusManager = LocalFocusManager.current
     val inputModeManager = LocalInputModeManager.current
     val tabFocus = remember { HomeTab.entries.map { FocusRequester() } }
     val contentFocus = remember { HomeTab.entries.map { FocusRequester() } }
+    ReadingActivityEffect(
+        bookId = currentContent?.book?.id,
+        bodyVisible = currentContent != null && visibleReaderBook == currentContent.book.id && !showSettings && !state.busy,
+        onActiveChanged = model::setReadingActive,
+        onTick = model::tickReading,
+    )
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(model::importBook)
     }
@@ -139,6 +146,7 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                             onOpenSettings = { showSettings = true },
                             onNavigationModeChanged = { readerNavigationMode = it },
                             onBackgroundChanged = { readerBackground = it },
+                            onReadingVisible = { visibleReaderBook = if (it) currentContent.book.id else null },
                             onProgress = { model.saveProgress(currentContent.book.id, it) },
                             onClose = model::closeBook,
                             onActionReady = { readerAction = it },
@@ -148,12 +156,14 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                             content = currentContent!!,
                             initialProgress = state.progress,
                             fontSize = state.fontSize,
+                            readerFonts = state.readerFonts,
                             paperStyle = state.paperStyle,
                             bindings = state.controllerBindings,
                             obscured = showSettings,
                             onOpenSettings = { showSettings = true },
                             onNavigationModeChanged = { readerNavigationMode = it },
                             onBackgroundChanged = { readerBackground = it },
+                            onReadingVisible = { visibleReaderBook = if (it) currentContent!!.book.id else null },
                             onProgress = { model.saveProgress(currentContent!!.book.id, it) },
                             onClose = model::closeBook,
                             onActionReady = { readerAction = it },
@@ -171,6 +181,7 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                                 when (homeTab) {
                                     HomeTab.Library -> LibraryScreen(
                                         books = state.books,
+                                        readingRecords = state.readingRecords,
                                         busy = state.busy,
                                         onOpen = model::openBook,
                                         onImport = importBook,
@@ -181,6 +192,9 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                                     )
                                     HomeTab.Settings -> SettingsScreen(
                                         fontSize = state.fontSize,
+                                        readerFonts = state.readerFonts,
+                                        onChineseFont = model::setChineseFont,
+                                        onEnglishFont = model::setEnglishFont,
                                         paperStyle = state.paperStyle,
                                         theme = state.appTheme,
                                         bindings = state.controllerBindings,
@@ -214,6 +228,9 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                     ) {
                         SettingsScreen(
                             fontSize = state.fontSize,
+                            readerFonts = state.readerFonts,
+                            onChineseFont = model::setChineseFont,
+                            onEnglishFont = model::setEnglishFont,
                             paperStyle = state.paperStyle,
                             theme = state.appTheme,
                             bindings = state.controllerBindings,

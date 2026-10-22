@@ -21,6 +21,11 @@ data class BookContent(
     val pdfFile: File? = null,
 )
 
-data class ReadingProgress(val chapterIndex: Int = 0, val pageIndex: Int = 0, val charOffset: Int = 0)
+data class ReadingProgress(
+    val chapterIndex: Int = 0,
+    val pageIndex: Int = 0,
+    val charOffset: Int = 0,
+    val completed: Boolean = false,
+)
 
 class ImportException(message: String, cause: Throwable? = null) : Exception(message, cause)

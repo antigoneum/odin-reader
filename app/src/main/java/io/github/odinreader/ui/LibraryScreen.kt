@@ -1,6 +1,7 @@
 package io.github.odinreader.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -23,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.odinreader.data.Book
+import io.github.odinreader.data.ReadingRecord
 
 /** The home shell supplies the safe drawing insets and horizontal page menu. */
 @Suppress("UNUSED_PARAMETER") // Navigation callbacks remain source-compatible with the existing home API.
@@ -36,6 +38,7 @@ internal fun LibraryScreen(
     onSettings: () -> Unit,
     tabFocusRequester: FocusRequester? = null,
     importFocusRequester: FocusRequester? = null,
+    readingRecords: Map<String, ReadingRecord> = emptyMap(),
 ) {
     val localImportFocus = remember { FocusRequester() }
     val importFocus = importFocusRequester ?: localImportFocus
@@ -86,6 +89,7 @@ internal fun LibraryScreen(
             itemsIndexed(books, key = { _, book -> book.id }) { index, book ->
                 BookCard(
                     book = book,
+                    readingRecord = readingRecords[book.id],
                     enabled = !busy,
                     modifier = Modifier
                         .then(if (index == firstVisibleIndex) Modifier.focusRequester(entryBookFocus) else Modifier)
@@ -109,7 +113,13 @@ internal fun LibraryScreen(
 }
 
 @Composable
-private fun BookCard(book: Book, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun BookCard(
+    book: Book,
+    readingRecord: ReadingRecord?,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val shape = RoundedCornerShape(16.dp)
     val tones = listOf(Color(0xFF31574A), Color(0xFF6E5949), Color(0xFF44546A), Color(0xFF75515B))
     val cover = tones[(book.id.hashCode() and Int.MAX_VALUE) % tones.size]
@@ -123,23 +133,41 @@ private fun BookCard(book: Book, enabled: Boolean, modifier: Modifier = Modifier
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp, focusedElevation = 6.dp),
     ) {
         Column(
-            Modifier.fillMaxWidth().weight(1f).background(cover).padding(horizontal = 14.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().weight(1f).background(cover).padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
             Text(book.format, color = Color.White.copy(alpha = 0.65f),
                 style = MaterialTheme.typography.labelSmall, letterSpacing = 3.sp)
             Spacer(Modifier.height(6.dp))
             Text(book.title, fontFamily = FontFamily.Serif, fontSize = 22.sp,
-                color = Color(0xFFF5F0DF), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                color = Color(0xFFF5F0DF), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("book-cover-title-${book.id}"))
             Spacer(Modifier.weight(1f))
-            Text(if (book.isDemo) "ODIN ORIGINAL" else "MY COLLECTION",
-                color = Color.White.copy(alpha = 0.5f), fontSize = 9.sp, letterSpacing = 1.sp)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("${readingPercent(readingRecord)}%", color = Color(0xFFF5F0DF),
+                    style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f).testTag("book-progress-${book.id}"))
+                Text(readingStatusLabel(readingRecord), color = Color.White.copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.labelSmall)
+            }
+            Spacer(Modifier.height(4.dp))
+            Box(Modifier.fillMaxWidth().height(4.dp).background(Color.White.copy(alpha = 0.22f), CircleShape)) {
+                Box(Modifier.fillMaxWidth(readingFraction(readingRecord).toFloat()).fillMaxHeight()
+                    .background(Color(0xFFF5F0DF), CircleShape))
+            }
         }
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleSmall)
+                style = MaterialTheme.typography.titleSmall, modifier = Modifier.testTag("book-title-${book.id}"))
             Text("${book.author} · ${book.chapterCount} ${if (book.format == "PDF") "页" else "章"}",
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(4.dp))
+            Text(readingTimeLabel(readingRecord), modifier = Modifier.testTag("book-read-time-${book.id}"),
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(remainingTimeLabel(readingRecord), modifier = Modifier.testTag("book-remaining-${book.id}"),
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
