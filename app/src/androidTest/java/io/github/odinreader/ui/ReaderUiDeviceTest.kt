@@ -1,11 +1,16 @@
 package io.github.odinreader.ui
 
+import android.app.Activity
+import android.app.Instrumentation
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -13,19 +18,25 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.AbstractComposeView
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.printToLog
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -138,6 +149,42 @@ class ReaderUiDeviceTest {
     }
 
     @Test
+    fun dpadCanReturnToImportAfterTouchAndConfirmOpensTheDocumentPicker() {
+        focusImportAfterTouch(useStick = false)
+        key(KeyEvent.KEYCODE_DPAD_DOWN, InputDevice.SOURCE_DPAD)
+        awaitFocusedBook()
+        key(KeyEvent.KEYCODE_DPAD_UP, InputDevice.SOURCE_DPAD)
+        awaitImportFocus()
+
+        // Intercept only the document picker: confirm must launch the real SAF
+        // contract, while the test never leaves a system dialog on the device.
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val filter = IntentFilter(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            addDataType("*/*")
+        }
+        val picker = instrumentation.addMonitor(
+            filter, Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null), true,
+        )
+        try {
+            gamepad(KeyEvent.KEYCODE_BUTTON_A)
+            compose.waitUntil(TIMEOUT) { picker.hits > 0 }
+        } finally {
+            instrumentation.removeMonitor(picker)
+        }
+        awaitLibrary()
+    }
+
+    @Test
+    fun joystickCanReachBooksAndReturnToImportAfterTouch() {
+        focusImportAfterTouch(useStick = true)
+        stick(0f, 1f)
+        awaitFocusedBook()
+        stick(0f, -1f)
+        awaitImportFocus()
+    }
+
+    @Test
     fun nativeTextViewEdgeTapsAndSwipesFlipExactlyOnePage() {
         openDemo()
         val bounds = nativeBodyBounds()
@@ -204,49 +251,64 @@ class ReaderUiDeviceTest {
         awaitText("20 sp")
         compose.waitUntil(TIMEOUT) { nativeBodyText() == expectedText }
         compose.waitForIdle()
-        assertEquals(expectedCounter, counterOrNull())
-        assertEquals(expectedProgress, repository.getProgress(DemoBook.ID))
+        // The settings sheet deliberately hides the covered reading semantics.
+        // Check page UI after closing it, while retaining the native text and
+        // persistent anchor checks during the font-size round trip.
         gamepad(KeyEvent.KEYCODE_BUTTON_B)
         awaitCounter(chapter = 1, page = 2)
+        assertEquals(expectedCounter, counterOrNull())
+        assertEquals(expectedProgress, repository.getProgress(DemoBook.ID))
     }
 
     private fun focusDemoWithDpad() {
-        val bookCard = hasClickAction() and SemanticsMatcher("book card metadata") { node ->
-            node.config.getOrNull(SemanticsProperties.Text).orEmpty()
-                .any { Regex(""" · \d+ 章$""").containsMatchIn(it.text) }
-        }
+        val bookCard = libraryBookMatcher
         val focusedBook = bookCard and isFocused()
         val demoCard = hasClickAction() and hasText(DEMO_TITLE)
         fun demoHasFocus(): Boolean =
             compose.onAllNodes(demoCard and isFocused()).fetchSemanticsNodes().isNotEmpty()
 
         try {
+            focusImportAfterTouch(useStick = false)
             key(KeyEvent.KEYCODE_DPAD_DOWN, InputDevice.SOURCE_DPAD)
             compose.waitUntil(TIMEOUT) {
                 compose.onAllNodes(focusedBook).fetchSemanticsNodes().isNotEmpty()
             }
-            // Imports precede the demo. Follow actual card geometry rather
-            // than assuming one Down from the import button selects the demo.
-            repeat(12) {
+            // The demo follows imports in the horizontal shelf. Use real Right
+            // events even while it is offscreen, exercising lazy-row scrolling.
+            repeat(BookRepository(context).listBooks().size + 2) {
                 if (demoHasFocus()) return
-                val current = compose.onAllNodes(focusedBook).fetchSemanticsNodes().firstOrNull()
-                val target = compose.onAllNodes(demoCard).fetchSemanticsNodes().firstOrNull()
-                val direction = when {
-                    current == null || target == null -> KeyEvent.KEYCODE_DPAD_DOWN
-                    target.boundsInRoot.center.y > current.boundsInRoot.center.y + 1f ->
-                        KeyEvent.KEYCODE_DPAD_DOWN
-                    target.boundsInRoot.center.y < current.boundsInRoot.center.y - 1f ->
-                        KeyEvent.KEYCODE_DPAD_UP
-                    target.boundsInRoot.center.x > current.boundsInRoot.center.x ->
-                        KeyEvent.KEYCODE_DPAD_RIGHT
-                    else -> KeyEvent.KEYCODE_DPAD_LEFT
-                }
-                key(direction, InputDevice.SOURCE_DPAD)
+                key(KeyEvent.KEYCODE_DPAD_RIGHT, InputDevice.SOURCE_DPAD)
             }
             assertTrue("D-pad navigation must reach the demo before A confirms it", demoHasFocus())
         } catch (failure: Throwable) {
             runCatching { compose.onRoot(useUnmergedTree = true).printToLog("OdinReaderUiTest") }
             throw failure
+        }
+    }
+
+    private fun focusImportAfterTouch(useStick: Boolean) {
+        awaitLibrary()
+        compose.onNodeWithText("把时间，留给阅读").performTouchInput { click() }
+        // A real directional event must leave touch mode before Material tabs
+        // accept focus. Establish a known tab, then navigate into the content.
+        if (useStick) stick(1f, 0f) else key(KeyEvent.KEYCODE_DPAD_RIGHT, InputDevice.SOURCE_DPAD)
+        compose.onNodeWithTag("home-tab-Library")
+            .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+            .assertIsFocused()
+        if (useStick) stick(0f, 1f) else key(KeyEvent.KEYCODE_DPAD_DOWN, InputDevice.SOURCE_DPAD)
+        awaitImportFocus()
+    }
+
+    private fun importHasFocus(): Boolean =
+        compose.onAllNodes(hasTestTag("library-import") and isFocused()).fetchSemanticsNodes().isNotEmpty()
+
+    private fun awaitImportFocus() {
+        compose.waitUntil(TIMEOUT) { importHasFocus() }
+    }
+
+    private fun awaitFocusedBook() {
+        compose.waitUntil(TIMEOUT) {
+            compose.onAllNodes(libraryBookMatcher and isFocused()).fetchSemanticsNodes().isNotEmpty()
         }
     }
 
@@ -261,9 +323,9 @@ class ReaderUiDeviceTest {
 
     private fun openDemo(expectedChapter: Int = 1, expectedPage: Int = 1) {
         awaitLibrary()
-        compose.onAllNodes(hasClickAction() and hasText(DEMO_TITLE)).fetchSemanticsNodes()
-            .also { assertTrue("Demo book must be visible in the library", it.isNotEmpty()) }
-        compose.onAllNodes(hasClickAction() and hasText(DEMO_TITLE))[0].performClick()
+        val demoTag = "library-book-${DemoBook.ID}"
+        compose.onNodeWithTag("library-book-grid").performScrollToNode(hasTestTag(demoTag))
+        compose.onNodeWithTag(demoTag).performClick()
         awaitCounter(chapter = expectedChapter, page = expectedPage)
         compose.waitUntil(TIMEOUT) { nativeBodyText().isNotBlank() }
     }
@@ -278,6 +340,29 @@ class ReaderUiDeviceTest {
                     KeyEvent(time, time, action, code, 0, 0,
                         KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, source),
                 )
+            }
+        }
+        compose.waitForIdle()
+    }
+
+    private fun stick(x: Float, y: Float) {
+        compose.runOnIdle {
+            val time = SystemClock.uptimeMillis()
+            val pointer = arrayOf(MotionEvent.PointerProperties().apply { id = 0 })
+            for ((axisX, axisY) in listOf(x to y, 0f to 0f)) {
+                val coordinates = arrayOf(MotionEvent.PointerCoords().apply {
+                    setAxisValue(MotionEvent.AXIS_X, axisX)
+                    setAxisValue(MotionEvent.AXIS_Y, axisY)
+                })
+                val event = MotionEvent.obtain(
+                    time, time, MotionEvent.ACTION_MOVE, 1, pointer, coordinates,
+                    0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_JOYSTICK, 0,
+                )
+                try {
+                    compose.activity.dispatchGenericMotionEvent(event)
+                } finally {
+                    event.recycle()
+                }
             }
         }
         compose.waitForIdle()
@@ -367,6 +452,9 @@ class ReaderUiDeviceTest {
         val COUNTER = Regex("""第 (\d+) / (\d+) 章 · (\d+) / (\d+) 页""")
         val pageCounterMatcher = SemanticsMatcher("reader chapter/page counter") { node ->
             node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { COUNTER.matches(it.text) }
+        }
+        val libraryBookMatcher = hasClickAction() and SemanticsMatcher("library book card") { node ->
+            node.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("library-book-") == true
         }
     }
 }

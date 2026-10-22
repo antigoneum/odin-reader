@@ -3,6 +3,7 @@ package io.github.odinreader.data
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import io.github.odinreader.reader.PdfPageRenderer
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -35,6 +36,14 @@ class BookRepository(context: Context) {
         try {
             val directory = bookDirectory(id)
             val book = bookFromJson(JSONObject(File(directory, "metadata.json").readText()))
+            if (book.format == "PDF") {
+                val document = File(directory, "document.pdf")
+                if (!document.isFile || document.canonicalFile.parentFile != directory.canonicalFile ||
+                    document.length() !in 1L..MAX_IMPORT_BYTES.toLong()
+                ) throw ImportException("PDF 文件缺失或无效，请重新导入")
+                val pages = validatePdf(document)
+                return BookContent(book.copy(chapterCount = pages), emptyList(), pdfFile = document)
+            }
             val array = JSONArray(File(directory, "chapters.json").readText())
             val chapters = List(array.length()) { index ->
                 val chapter = array.getJSONObject(index)
@@ -56,18 +65,42 @@ class BookRepository(context: Context) {
             val name = displayName(uri)
             val bytes = appContext.contentResolver.openInputStream(uri)?.use { readBounded(it, MAX_IMPORT_BYTES) }
                 ?: throw ImportException("无法读取所选文件")
+            val mimeType = runCatching { appContext.contentResolver.getType(uri) }.getOrNull()
+            val hasPdfHeader = bytes.size >= 5 && bytes.copyOfRange(0, 5).contentEquals(PDF_HEADER)
+            if (name.endsWith(".pdf", ignoreCase = true) || mimeType == "application/pdf" || hasPdfHeader) {
+                val id = UUID.randomUUID().toString()
+                libraryDirectory.mkdirs()
+                val staging = File(libraryDirectory, ".$id.importing")
+                pendingDirectory = staging
+                check(staging.mkdirs()) { "无法创建书籍目录" }
+                val document = File(staging, "document.pdf")
+                document.writeBytes(bytes)
+                val pages = validatePdf(document)
+                val book = Book(
+                    id = id,
+                    title = name.substringBeforeLast('.').ifBlank { "未命名 PDF" }.take(512),
+                    author = "作者未知",
+                    format = "PDF",
+                    addedAt = System.currentTimeMillis(),
+                    chapterCount = pages,
+                )
+                File(staging, "metadata.json").writeText(bookToJson(book).toString())
+                check(staging.renameTo(bookDirectory(id))) { "无法保存导入文件" }
+                pendingDirectory = null
+                return book
+            }
             val isZip = bytes.size >= 4 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()
             val parsed = when {
                 name.endsWith(".epub", ignoreCase = true) || isZip -> EpubParser.parse(bytes, name.substringBeforeLast('.'))
                 name.endsWith(".txt", ignoreCase = true) ||
-                    appContext.contentResolver.getType(uri)?.startsWith("text/plain") == true -> {
+                    mimeType?.startsWith("text/plain") == true -> {
                     val text = BookTextParser.decode(bytes)
                     if (text.count { it == '\u0000' } > text.length / 100) {
                         throw ImportException("这不是可识别的文本文件")
                     }
                     ParsedBook(name.substringBeforeLast('.').ifBlank { "未命名书籍" }, "作者未知", "TXT", BookTextParser.chapters(text))
                 }
-                else -> throw ImportException("目前支持 TXT 与无 DRM 的 EPUB 文件")
+                else -> throw ImportException("目前支持 TXT、无 DRM 的 EPUB 与未加密 PDF 文件")
             }
             if (parsed.chapters.isEmpty()) throw ImportException("文件中没有可阅读的正文")
             if (parsed.chapters.size > MAX_CHAPTERS) throw ImportException("章节过多，目前最多支持 $MAX_CHAPTERS 章")
@@ -128,6 +161,25 @@ class BookRepository(context: Context) {
         return File(libraryDirectory, id)
     }
 
+    private fun validatePdf(document: File): Int {
+        try {
+            return PdfPageRenderer(document).use { renderer ->
+                val pages = renderer.pageCount
+                if (pages <= 0) throw ImportException("PDF 中没有可阅读的页面")
+                if (pages > MAX_PDF_PAGES) throw ImportException("PDF 页数过多，目前最多支持 $MAX_PDF_PAGES 页")
+                // Validate a real page before publishing metadata into the library.
+                renderer.render(0, 8, 8).recycle()
+                pages
+            }
+        } catch (error: ImportException) {
+            throw error
+        } catch (error: SecurityException) {
+            throw ImportException("暂不支持加密或需要密码的 PDF，请先提供未加密文件", error)
+        } catch (error: Exception) {
+            throw ImportException("无法读取 PDF，文件可能已损坏或受到加密保护", error)
+        }
+    }
+
     private fun displayName(uri: Uri): String = runCatching {
         appContext.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) cursor.getString(0) else null
@@ -148,6 +200,8 @@ class BookRepository(context: Context) {
     companion object {
         private const val MAX_IMPORT_BYTES = 20 * 1024 * 1024
         internal const val MAX_CHAPTERS = 1200
+        internal const val MAX_PDF_PAGES = 5000
+        private val PDF_HEADER = "%PDF-".toByteArray(Charsets.US_ASCII)
 
         internal fun readBounded(input: InputStream, maxBytes: Int): ByteArray {
             val output = ByteArrayOutputStream()

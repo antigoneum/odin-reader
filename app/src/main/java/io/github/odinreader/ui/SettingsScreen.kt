@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -40,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
@@ -54,7 +57,9 @@ import io.github.odinreader.input.ControllerBindings
 import io.github.odinreader.input.ControllerButton
 import kotlin.math.roundToInt
 
-/** Shared settings overlay for the library and the native reader. */
+private val SettingsControlShape = RoundedCornerShape(14.dp)
+
+/** Settings content shared by the handheld menu and the native reader overlay. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
@@ -71,10 +76,14 @@ fun SettingsScreen(
     onActionReady: (((ControllerAction) -> Boolean)?) -> Unit,
     activateFocused: () -> Boolean,
     title: String = "设置",
+    isPdf: Boolean = false,
+    embedded: Boolean = false,
+    tabFocusRequester: FocusRequester? = null,
+    backFocusRequester: FocusRequester? = null,
 ) {
     var editingButton by remember { mutableStateOf<ControllerButton?>(null) }
     val focusManager = LocalFocusManager.current
-    val backFocus = remember { FocusRequester() }
+    val backFocus = backFocusRequester ?: remember { FocusRequester() }
     val settingsScroll = rememberLazyListState()
     val closeCurrent by rememberUpdatedState {
         if (editingButton != null) editingButton = null else onClose()
@@ -97,11 +106,13 @@ fun SettingsScreen(
         onDispose { onActionReady(null) }
     }
     BackHandler { closeCurrent() }
-    LaunchedEffect(editingButton) { backFocus.requestFocus() }
+    LaunchedEffect(editingButton, backFocus) { backFocus.requestFocus() }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(
-            Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 24.dp, vertical = 12.dp),
+            Modifier.fillMaxSize()
+                .then(if (embedded) Modifier else Modifier.safeDrawingPadding())
+                .padding(horizontal = 24.dp, vertical = if (embedded) 8.dp else 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -112,8 +123,17 @@ fun SettingsScreen(
                 )
                 TextButton(
                     onClick = { closeCurrent() },
-                    modifier = Modifier.focusRequester(backFocus).testTag("settings-back"),
-                ) { Text(if (editingButton != null) "返回设置  B" else "完成  B") }
+                    shape = SettingsControlShape,
+                    modifier = Modifier.focusRequester(backFocus).testTag("settings-back")
+                        .focusProperties { tabFocusRequester?.let { up = it } }
+                        .heightIn(min = 48.dp).controllerFocusRing(SettingsControlShape),
+                ) {
+                    Text(when {
+                        editingButton != null -> "返回设置  B"
+                        embedded -> "返回书库  B"
+                        else -> "完成  B"
+                    })
+                }
             }
             val selectedButton = editingButton
             if (selectedButton != null) {
@@ -132,7 +152,9 @@ fun SettingsScreen(
                                 onBinding(selectedButton, action)
                                 editingButton = null
                             },
+                            shape = SettingsControlShape,
                             modifier = Modifier.fillMaxWidth().testTag("action-${action.name}")
+                                .heightIn(min = 48.dp).controllerFocusRing(SettingsControlShape)
                                 .semantics { selected = chosen; role = Role.RadioButton },
                         ) {
                             RadioButton(selected = chosen, onClick = null)
@@ -148,46 +170,61 @@ fun SettingsScreen(
                     state = settingsScroll,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    item(key = "font") {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Text("正文字号", Modifier.width(96.dp))
-                            OutlinedButton(onClick = { onFontSize(fontSize - 2f) }, enabled = fontSize > 14f) {
-                                Text("A−")
-                            }
-                            Text("${fontSize.roundToInt()} sp")
-                            OutlinedButton(onClick = { onFontSize(fontSize + 2f) }, enabled = fontSize < 32f) {
-                                Text("A+")
+                    if (isPdf) {
+                        item(key = "pdf-layout") {
+                            Text("PDF 保留原始版面；请在阅读控制栏中缩放，或双指缩放并拖动查看。主题用于界面，PDF 页面保持原色。")
+                        }
+                    } else {
+                        item(key = "font") {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Text("正文字号", Modifier.width(96.dp))
+                                OutlinedButton(
+                                    onClick = { onFontSize(fontSize - 2f) },
+                                    enabled = fontSize > 14f,
+                                    shape = SettingsControlShape,
+                                    modifier = Modifier.heightIn(min = 48.dp).controllerFocusRing(SettingsControlShape),
+                                ) { Text("A−") }
+                                Text("${fontSize.roundToInt()} sp")
+                                OutlinedButton(
+                                    onClick = { onFontSize(fontSize + 2f) },
+                                    enabled = fontSize < 32f,
+                                    shape = SettingsControlShape,
+                                    modifier = Modifier.heightIn(min = 48.dp).controllerFocusRing(SettingsControlShape),
+                                ) { Text("A+") }
                             }
                         }
-                    }
-                    item(key = "paper") {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("阅读背景", style = MaterialTheme.typography.titleMedium)
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                PaperStyle.entries.forEach { style ->
-                                    FilterChip(
-                                        selected = style == paperStyle,
-                                        onClick = { onPaperStyle(style) },
-                                        label = { Text(style.label) },
-                                        modifier = Modifier.testTag("paper-${style.name}"),
-                                    )
+                        item(key = "paper") {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("阅读背景", style = MaterialTheme.typography.titleMedium)
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    PaperStyle.entries.forEach { style ->
+                                        FilterChip(
+                                            selected = style == paperStyle,
+                                            onClick = { onPaperStyle(style) },
+                                            label = { Text(style.label) },
+                                            shape = SettingsControlShape,
+                                            modifier = Modifier.testTag("paper-${style.name}")
+                                                .heightIn(min = 48.dp).controllerFocusRing(SettingsControlShape),
+                                        )
+                                    }
                                 }
+                                Text(
+                                    "选择“跟随主题”，正文与界面一起使用主题配色。字号和背景自动保存，调整字号后保持当前段落。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
-                            Text(
-                                "选择“跟随主题”，正文与界面一起使用主题配色。字号和背景自动保存，调整字号后保持当前段落。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                         }
                     }
                     item(key = "theme-heading") {
                         HorizontalDivider()
                         Text("主题", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "Catppuccin · 四套官方配色。切换主题时，阅读背景也会设为跟随主题；之后仍可单独选择阅读背景。",
+                            if (isPdf) "Catppuccin · 四套官方配色。PDF 页面保持原色，主题应用于界面。"
+                            else "Catppuccin · 四套官方配色。切换主题时，阅读背景也会设为跟随主题；之后仍可单独选择阅读背景。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -197,7 +234,9 @@ fun SettingsScreen(
                         FilterChip(
                             selected = choice == theme,
                             onClick = { onTheme(choice) },
-                            modifier = Modifier.fillMaxWidth().testTag("theme-${choice.name}"),
+                            shape = SettingsControlShape,
+                            modifier = Modifier.fillMaxWidth().testTag("theme-${choice.name}")
+                                .heightIn(min = 48.dp).controllerFocusRing(SettingsControlShape),
                             label = { Text(choice.label) },
                             leadingIcon = {
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -220,7 +259,9 @@ fun SettingsScreen(
                     items(ControllerButton.entries, key = { "binding-${it.name}" }) { button ->
                         OutlinedButton(
                             onClick = { editingButton = button },
-                            modifier = Modifier.fillMaxWidth().testTag("binding-${button.name}"),
+                            shape = SettingsControlShape,
+                            modifier = Modifier.fillMaxWidth().testTag("binding-${button.name}")
+                                .heightIn(min = 48.dp).controllerFocusRing(SettingsControlShape),
                         ) {
                             Text(button.label, Modifier.width(80.dp))
                             Text(bindings.actionFor(button).label, Modifier.weight(1f))
@@ -230,7 +271,9 @@ fun SettingsScreen(
                     item(key = "reset-bindings") {
                         OutlinedButton(
                             onClick = onResetBindings,
-                            modifier = Modifier.testTag("reset-bindings"),
+                            shape = SettingsControlShape,
+                            modifier = Modifier.testTag("reset-bindings")
+                                .heightIn(min = 48.dp).controllerFocusRing(SettingsControlShape),
                         ) { Text("恢复默认按键") }
                     }
                 }

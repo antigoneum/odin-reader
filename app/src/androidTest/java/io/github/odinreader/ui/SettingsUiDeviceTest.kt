@@ -77,6 +77,7 @@ class SettingsUiDeviceTest {
     @Test
     fun allFourThemesSaveTheirSelectionAndThemeReadingBackground() {
         awaitLibrary()
+        compose.onNodeWithTag("library-book-grid").performScrollToNode(hasTestTag("library-book-${DemoBook.ID}"))
         compose.onAllNodes(hasClickAction() and hasText("沿着山脊去看海"))[0].performClick()
         awaitPage(1)
         gamepad(KeyEvent.KEYCODE_BUTTON_START)
@@ -124,6 +125,7 @@ class SettingsUiDeviceTest {
         // Remapping the reading action must not prevent B from closing settings.
         gamepad(KeyEvent.KEYCODE_BUTTON_B)
         awaitLibrary()
+        compose.onNodeWithTag("library-book-grid").performScrollToNode(hasTestTag("library-book-${DemoBook.ID}"))
         compose.onAllNodes(hasClickAction() and hasText("沿着山脊去看海"))[0].performClick()
         awaitPage(1)
         gamepad(KeyEvent.KEYCODE_BUTTON_L1)
