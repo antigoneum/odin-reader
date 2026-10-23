@@ -10,6 +10,8 @@ data class Book(
     val addedAt: Long,
     val chapterCount: Int,
     val isDemo: Boolean = false,
+    /** Bounded local artwork, if the imported book provides a usable cover. */
+    val coverFile: File? = null,
 )
 
 data class BookChapter(val title: String, val text: String)

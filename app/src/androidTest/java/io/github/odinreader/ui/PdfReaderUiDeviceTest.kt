@@ -45,8 +45,14 @@ class PdfReaderUiDeviceTest {
     private lateinit var fixture: File
     private lateinit var book: Book
     private var testModel: ReaderViewModel? = null
+    private lateinit var savedSettings: Map<String, *>
     private val isolatedBook = object : ExternalResource() {
         override fun before() {
+            val settings = context.getSharedPreferences("reader_settings", Context.MODE_PRIVATE)
+            savedSettings = settings.all
+            // This test asserts one original PDF page per action, independent
+            // of the user's saved spread, animation and controller mappings.
+            check(settings.edit().clear().commit())
             fixture = File(context.cacheDir, "PDF-device-${UUID.randomUUID()}.pdf")
             val document = PdfDocument()
             try {
@@ -69,6 +75,20 @@ class PdfReaderUiDeviceTest {
             runBlocking { testModel?.awaitHistoryWrites() }
             if (::book.isInitialized) BookRepository(context).deleteBook(book.id)
             if (::fixture.isInitialized) fixture.delete()
+            val editor = context.getSharedPreferences("reader_settings", Context.MODE_PRIVATE).edit().clear()
+            savedSettings.forEach { (key, value) ->
+                when (value) {
+                    is String -> editor.putString(key, value)
+                    is Int -> editor.putInt(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is Float -> editor.putFloat(key, value)
+                    is Boolean -> editor.putBoolean(key, value)
+                    is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
+                    null -> Unit
+                    else -> error("Unexpected setting type for $key")
+                }
+            }
+            check(editor.commit())
         }
     }
     private val compose = createAndroidComposeRule<MainActivity>()

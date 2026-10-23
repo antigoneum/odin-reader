@@ -1,32 +1,23 @@
 package io.github.odinreader.ui
 
-import android.annotation.SuppressLint
-import android.text.Layout
-import android.util.TypedValue
-import android.widget.TextView
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,23 +29,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import io.github.odinreader.reader.ReaderFont
 import io.github.odinreader.reader.ReaderFontSelection
-import io.github.odinreader.reader.ReaderFonts
-import io.github.odinreader.reader.ReaderTypography
-import kotlinx.coroutines.CancellationException
+import io.github.odinreader.reader.ReaderLineSpacing
+import io.github.odinreader.reader.ReaderLetterSpacing
 
 private val FontChoiceShape = RoundedCornerShape(14.dp)
-private const val FontPreviewText = "山海之间，慢慢阅读。\nThe quick brown fox jumps over the lazy dog.\n0123456789 · {} [] => !="
 
 /** A scrollable controller-friendly list and a single, lazily loaded native preview. */
 @Composable
@@ -63,6 +49,10 @@ internal fun ReaderFontPicker(
     onChineseFont: (ReaderFont) -> Unit,
     onEnglishFont: (ReaderFont) -> Unit,
     backFocus: FocusRequester,
+    fontSize: Float = 20f,
+    lineSpacing: Float = ReaderLineSpacing.Default,
+    letterSpacing: Float = ReaderLetterSpacing.Default,
+    paperStyle: PaperStyle = PaperStyle.Theme,
 ) {
     var editingEnglish by rememberSaveable { mutableStateOf(false) }
     val chineseFocus = remember { FocusRequester() }
@@ -144,65 +134,8 @@ internal fun ReaderFontPicker(
                     }
                 }
             }
-            ReaderFontPreview(selection, Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-@SuppressLint("InlinedApi") // SIMPLE is an inlined integer on API 28 too.
-private fun ReaderFontPreview(selection: ReaderFontSelection, modifier: Modifier = Modifier) {
-    val context = LocalContext.current.applicationContext
-    val previewText = FontPreviewText + if (selection.english == ReaderFont.JetBrainsMono) "\n\uf120  \uf02d  \ue0b0" else ""
-    var typography by remember(selection) { mutableStateOf<ReaderTypography?>(ReaderFonts.getCached(selection)) }
-    var failed by remember(selection) { mutableStateOf(false) }
-    LaunchedEffect(selection, context) {
-        try {
-            typography = ReaderFonts.load(context, selection)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            failed = true
-        }
-    }
-    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-    Surface(
-        modifier = modifier.testTag("reader-font-preview"),
-        shape = FontChoiceShape,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-    ) {
-        Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("中文 · ${selection.chinese.label}", style = MaterialTheme.typography.labelMedium)
-                Text("英文 · ${selection.english.label}", style = MaterialTheme.typography.labelMedium)
-            }
-            val loaded = typography
-            when {
-                failed -> Text("字体暂时无法加载，请重新选择。", color = MaterialTheme.colorScheme.error)
-                loaded == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-                else -> AndroidView(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    factory = { viewContext ->
-                        TextView(viewContext).apply {
-                            tag = "reader-font-preview-text"
-                            includeFontPadding = false
-                            isFallbackLineSpacing = true
-                            setLineSpacing(0f, 1.45f)
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                            breakStrategy = android.graphics.text.LineBreaker.BREAK_STRATEGY_SIMPLE
-                            hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
-                        }
-                    },
-                    update = { view ->
-                        view.typeface = loaded.englishTypeface
-                        view.setTextColor(textColor)
-                        view.text = loaded.style(previewText)
-                        view.contentDescription = previewText
-                    },
-                )
-            }
+            ReaderTypographyPreview(selection, fontSize, lineSpacing, letterSpacing, paperStyle,
+                Modifier.weight(1f), tag = "reader-font-preview")
         }
     }
 }

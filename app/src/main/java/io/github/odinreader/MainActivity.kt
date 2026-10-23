@@ -6,6 +6,8 @@ import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -35,13 +37,35 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         hideStatusBar()
         setContent { OdinReaderApp(this) }
+        allowComposeToHandleInsets()
+    }
+
+    private fun allowComposeToHandleInsets() {
+        // The platform Material theme's content container fits system windows by
+        // default. After recreation it adds navigation padding a second time,
+        // shrinking Compose's viewport. Compose already handles all safe insets.
+        val content = findViewById<View>(android.R.id.content)
+        val container = content?.parent as? ViewGroup
+        if (container != null && container !== window.decorView) {
+            container.fitsSystemWindows = false
+            container.setPadding(0, 0, 0, 0)
+        }
     }
 
     private fun hideStatusBar() {
+        // Framework window-state restoration can reapply decor fitting after
+        // onCreate. Keep the reader's viewport behind the gesture navigation area.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowCompat.getInsetsController(window, window.decorView).apply {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             hide(WindowInsetsCompat.Type.statusBars())
         }
+    }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        allowComposeToHandleInsets()
+        hideStatusBar()
     }
 
     // This public Activity hook inherits a class-level restriction from AndroidX core.

@@ -17,6 +17,10 @@ import io.github.odinreader.input.ControllerBindings
 import io.github.odinreader.input.ControllerButton
 import io.github.odinreader.reader.ReaderFont
 import io.github.odinreader.reader.ReaderFontSelection
+import io.github.odinreader.reader.ReadingMode
+import io.github.odinreader.reader.PageTurnAnimation
+import io.github.odinreader.reader.ReaderLineSpacing
+import io.github.odinreader.reader.ReaderLetterSpacing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -39,11 +43,15 @@ data class ReaderUiState(
     val busy: Boolean = true,
     val message: String? = null,
     val fontSize: Float = 20f,
+    val lineSpacing: Float = ReaderLineSpacing.Default,
+    val letterSpacing: Float = ReaderLetterSpacing.Default,
     val readerFonts: ReaderFontSelection = ReaderFontSelection(),
     val paperStyle: PaperStyle = PaperStyle.Theme,
     val appTheme: AppTheme = AppTheme.System,
     val controllerBindings: ControllerBindings = ControllerBindings(),
     val readingRecords: Map<String, ReadingRecord> = emptyMap(),
+    val readingMode: ReadingMode = ReadingMode.Single,
+    val pageAnimations: Map<ReadingMode, PageTurnAnimation> = ReadingMode.entries.associateWith { it.defaultAnimation },
 )
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -53,11 +61,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val mutableState = MutableStateFlow(
         ReaderUiState(
             fontSize = preferences.getFloat("font_size", 20f).coerceIn(14f, 32f),
+            lineSpacing = ReaderLineSpacing.sanitize(preferences.getFloat("line_spacing", ReaderLineSpacing.Default)),
+            letterSpacing = ReaderLetterSpacing.sanitize(preferences.getFloat("letter_spacing", ReaderLetterSpacing.Default)),
             readerFonts = ReaderFontSelection.fromPreferences(
                 preferences.getString("reader_font_chinese", null),
                 preferences.getString("reader_font_english", null),
                 preferences.getString("reader_font", null),
             ),
+            readingMode = ReadingMode.fromPreference(preferences.getString("reading_mode", null)),
+            pageAnimations = ReadingMode.entries.associateWith { mode ->
+                mode.animationFromPreferences(
+                    value = preferences.getString("page_animation.${mode.id}", null),
+                    legacyDualPageValue = preferences.getString("page_animation.dual_page", null),
+                    legacyMode = preferences.getString("reading_mode", null),
+                )
+            },
             paperStyle = PaperStyle.entries.getOrElse(
                 preferences.getInt("paper_style", PaperStyle.Theme.ordinal),
             ) { PaperStyle.Theme },
@@ -77,7 +95,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         data class Import(val uri: Uri) : HistoryEvent
         data class Open(val book: Book, val monotonic: Long, val wall: Long) : HistoryEvent
         data class Close(val monotonic: Long, val wall: Long) : HistoryEvent
-        data class Position(val bookId: String, val progress: ReadingProgress, val monotonic: Long, val wall: Long) : HistoryEvent
+        data class Position(val bookId: String, val progress: ReadingProgress, val monotonic: Long, val wall: Long, val pageStep: Int) : HistoryEvent
         data class Active(val active: Boolean, val monotonic: Long, val wall: Long) : HistoryEvent
         data class Tick(val monotonic: Long, val wall: Long) : HistoryEvent
         data class Flush(val monotonic: Long, val wall: Long) : HistoryEvent
@@ -170,7 +188,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun saveProgress(bookId: String, progress: ReadingProgress) {
         if (state.value.content?.book?.id != bookId) return
         mutableState.update { it.copy(progress = progress) }
-        events.trySend(HistoryEvent.Position(bookId, progress, SystemClock.elapsedRealtime(), System.currentTimeMillis()))
+        events.trySend(HistoryEvent.Position(bookId, progress, SystemClock.elapsedRealtime(), System.currentTimeMillis(), state.value.readingMode.pageStep))
     }
 
     /** Called by the resumed, focused reading page; menus/loading never enable it. */
@@ -248,7 +266,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val before = activeRecord ?: return
         val oldUnits = ReadingMetrics.position(content, before.progress).positionUnits
         val updated = ReadingMetrics.withProgress(content, before, event.progress,
-            (before.totalReadingMillis - timeAtPreviousPosition).coerceAtLeast(0L)).copy(lastReadAt = event.wall)
+            (before.totalReadingMillis - timeAtPreviousPosition).coerceAtLeast(0L),
+            sequentialPageStep = event.pageStep).copy(lastReadAt = event.wall)
         if (ReadingMetrics.position(content, event.progress).positionUnits != oldUnits) {
             timeAtPreviousPosition = updated.totalReadingMillis
         }
@@ -304,6 +323,34 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val value = size.coerceIn(14f, 32f)
         mutableState.update { it.copy(fontSize = value) }
         preferences.edit().putFloat("font_size", value).apply()
+    }
+
+    fun setReadingMode(mode: ReadingMode) {
+        mutableState.update { it.copy(readingMode = mode) }
+        val editor = preferences.edit().putString("reading_mode", mode.id)
+        if (preferences.getString("reading_mode", null) == "dual_page") {
+            // Loading is read-only. Preserve the inherited animation when a user
+            // explicitly replaces the legacy mode, including its former default.
+            editor.putString("page_animation.dual_column", state.value.pageAnimations.getValue(ReadingMode.DualColumn).id)
+        }
+        editor.apply()
+    }
+
+    fun setLineSpacing(spacing: Float) {
+        val value = ReaderLineSpacing.sanitize(spacing)
+        mutableState.update { it.copy(lineSpacing = value) }
+        preferences.edit().putFloat("line_spacing", value).apply()
+    }
+
+    fun setLetterSpacing(spacing: Float) {
+        val value = ReaderLetterSpacing.sanitize(spacing)
+        mutableState.update { it.copy(letterSpacing = value) }
+        preferences.edit().putFloat("letter_spacing", value).apply()
+    }
+
+    fun setPageAnimation(mode: ReadingMode, animation: PageTurnAnimation) {
+        mutableState.update { it.copy(pageAnimations = it.pageAnimations + (mode to animation)) }
+        preferences.edit().putString("page_animation.${mode.id}", animation.id).apply()
     }
 
     fun setChineseFont(font: ReaderFont) {

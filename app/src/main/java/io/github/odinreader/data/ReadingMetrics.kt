@@ -45,13 +45,14 @@ object ReadingMetrics {
         record: ReadingRecord,
         progress: ReadingProgress,
         activeMillisSincePosition: Long,
+        sequentialPageStep: Int = 1,
     ): ReadingRecord {
         val before = position(content, record.progress)
         val after = position(content, progress)
         val advanced = after.positionUnits - before.positionUnits
         val atFrontier = before.positionUnits >= record.furthestUnits - 0.001
         val sample = atFrontier && after.positionUnits > record.furthestUnits &&
-            usefulSample(content.book.format, record.progress, progress, advanced, activeMillisSincePosition)
+            usefulSample(content.book.format, record.progress, progress, advanced, activeMillisSincePosition, sequentialPageStep)
         val units = record.speedUnits + if (sample) advanced else 0.0
         val millis = saturatingAdd(record.speedReadingMillis, if (sample) activeMillisSincePosition else 0L)
         return record.copy(
@@ -71,18 +72,21 @@ object ReadingMetrics {
         after: ReadingProgress,
         units: Double,
         millis: Long,
+        sequentialPageStep: Int,
     ): Boolean {
         if (!units.isFinite() || units <= 0.0) return false
         val pdf = format == "PDF"
         val minimum = if (pdf) 5_000L else 3_000L
         val maximum = if (pdf) 30L * 60_000 else 10L * 60_000
         if (millis !in minimum..maximum) return false
-        val sequential = if (pdf) after.pageIndex == before.pageIndex + 1 else
-            after.chapterIndex == before.chapterIndex && after.pageIndex == before.pageIndex + 1 &&
+        val allowedStep = sequentialPageStep.coerceIn(1, 2)
+        val pageDelta = after.pageIndex.toLong() - before.pageIndex
+        val sequential = if (pdf) pageDelta in 1L..allowedStep.toLong() else
+            after.chapterIndex == before.chapterIndex && pageDelta in 1L..allowedStep.toLong() &&
                 after.charOffset > before.charOffset
         if (!sequential) return false
         // Rapid scanning, arbitrary jumps and time left idle on a page must not dominate the estimate.
-        return if (pdf) units <= 1.001 else units <= 20_000.0 && units * 60_000 / millis <= 3_000.0
+        return if (pdf) units <= allowedStep + 0.001 else units <= 20_000.0 && units * 60_000 / millis <= 3_000.0
     }
 
     fun remainingMillis(

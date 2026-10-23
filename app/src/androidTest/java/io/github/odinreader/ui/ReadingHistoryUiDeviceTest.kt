@@ -41,9 +41,34 @@ class ReadingHistoryUiDeviceTest {
         get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val historyGuard = ReadingHistoryTestGuard(context, DemoBook.ID)
     private lateinit var model: ReaderViewModel
+    private lateinit var savedSettings: Map<String, *>
     private val isolatedDemo = object : ExternalResource() {
-        override fun before() = historyGuard.before()
-        override fun after() = historyGuard.after()
+        override fun before() {
+            historyGuard.before()
+            val settings = context.getSharedPreferences("reader_settings", Context.MODE_PRIVATE)
+            savedSettings = settings.all
+            // Page and durable-offset assertions below intentionally exercise
+            // the default single-page renderer and typography.
+            check(settings.edit().clear().commit())
+        }
+
+        override fun after() {
+            historyGuard.after()
+            val editor = context.getSharedPreferences("reader_settings", Context.MODE_PRIVATE).edit().clear()
+            savedSettings.forEach { (key, value) ->
+                when (value) {
+                    is String -> editor.putString(key, value)
+                    is Int -> editor.putInt(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is Float -> editor.putFloat(key, value)
+                    is Boolean -> editor.putBoolean(key, value)
+                    is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
+                    null -> Unit
+                    else -> error("Unexpected setting type for $key")
+                }
+            }
+            check(editor.commit())
+        }
     }
     private val compose = createAndroidComposeRule<MainActivity>()
     @get:Rule val rules: TestRule = RuleChain.outerRule(isolatedDemo).around(compose)

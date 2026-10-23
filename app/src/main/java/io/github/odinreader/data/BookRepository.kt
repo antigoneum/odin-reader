@@ -25,7 +25,12 @@ class BookRepository(context: Context) {
         val imported = libraryDirectory.listFiles().orEmpty()
             .filter { it.isDirectory && isBookId(it.name) }
             .mapNotNull { directory ->
-                runCatching { bookFromJson(JSONObject(File(directory, "metadata.json").readText())) }.getOrNull()
+                runCatching {
+                    val book = bookFromJson(JSONObject(File(directory, "metadata.json").readText()), directory)
+                    if (book.format == "PDF" && book.coverFile == null) ensurePdfCover(directory)
+                    if (book.format == "EPUB" && book.coverFile == null) ensureEpubCover(directory, book.title)
+                    withCover(book, directory)
+                }.getOrNull()
             }
             .sortedByDescending { it.addedAt }
         return imported + DemoBook.content.book
@@ -36,7 +41,7 @@ class BookRepository(context: Context) {
         if (id == DemoBook.ID) return DemoBook.content
         try {
             val directory = bookDirectory(id)
-            val book = bookFromJson(JSONObject(File(directory, "metadata.json").readText()))
+            val book = bookFromJson(JSONObject(File(directory, "metadata.json").readText()), directory)
             if (book.format == "PDF") {
                 val document = File(directory, "document.pdf")
                 if (!document.isFile || document.canonicalFile.parentFile != directory.canonicalFile ||
@@ -86,9 +91,10 @@ class BookRepository(context: Context) {
                     chapterCount = pages,
                 )
                 File(staging, "metadata.json").writeText(bookToJson(book).toString())
+                CoverImages.savePdf(document, File(staging, CoverImages.FILE_NAME))
                 check(staging.renameTo(bookDirectory(id))) { "无法保存导入文件" }
                 pendingDirectory = null
-                return book
+                return withCover(book, bookDirectory(id))
             }
             val isZip = bytes.size >= 4 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()
             val parsed = when {
@@ -124,9 +130,15 @@ class BookRepository(context: Context) {
                 chapters.put(JSONObject().put("title", chapter.title).put("text", chapter.text))
             }
             File(staging, "chapters.json").writeText(chapters.toString())
+            val hasCover = CoverImages.save(parsed.coverImageBytes, File(staging, CoverImages.FILE_NAME))
+            // Keep the bounded original for future cover refreshes or format improvements.
+            if (parsed.format == "EPUB") {
+                File(staging, "document.epub").writeBytes(bytes)
+                if (!hasCover) File(staging, NO_EPUB_COVER_MARKER).createNewFile()
+            }
             check(staging.renameTo(bookDirectory(id))) { "无法保存导入文件" }
             pendingDirectory = null
-            return book
+            return withCover(book, bookDirectory(id))
         } catch (error: ImportException) {
             throw error
         } catch (error: Exception) {
@@ -184,15 +196,49 @@ class BookRepository(context: Context) {
         .put("id", book.id).put("title", book.title).put("author", book.author)
         .put("format", book.format).put("addedAt", book.addedAt).put("chapterCount", book.chapterCount)
 
-    private fun bookFromJson(json: JSONObject) = Book(
+    private fun bookFromJson(json: JSONObject, directory: File): Book {
+        require(json.getString("id") == directory.name) { "书籍信息与目录不一致" }
+        return withCover(Book(
         id = json.getString("id"), title = json.getString("title"), author = json.getString("author"),
         format = json.getString("format"), addedAt = json.getLong("addedAt"), chapterCount = json.getInt("chapterCount"),
+        ), directory)
+    }
+
+    private fun withCover(book: Book, directory: File): Book = book.copy(
+        coverFile = File(directory, CoverImages.FILE_NAME).takeIf {
+            it.isFile && it.length() in 1..CoverImages.MAX_SAVED_BYTES && it.canonicalFile.parentFile == directory.canonicalFile
+        },
     )
+
+    private fun ensurePdfCover(directory: File) {
+        val cover = File(directory, CoverImages.FILE_NAME)
+        val document = File(directory, "document.pdf")
+        if (!cover.exists() && document.isFile && document.length() in 1..MAX_IMPORT_BYTES.toLong() &&
+            document.canonicalFile.parentFile == directory.canonicalFile
+        ) CoverImages.savePdf(document, cover)
+    }
+
+    private fun ensureEpubCover(directory: File, fallbackTitle: String) {
+        val cover = File(directory, CoverImages.FILE_NAME)
+        val checked = File(directory, NO_EPUB_COVER_MARKER)
+        val document = File(directory, "document.epub")
+        if (cover.exists() || checked.exists() || !document.isFile ||
+            document.length() !in 1..MAX_IMPORT_BYTES.toLong() ||
+            document.canonicalFile.parentFile != directory.canonicalFile
+        ) return
+        // Optional backfill supports books imported before a new cover-recognition
+        // rule. A failed/missing image must never hide an otherwise readable book.
+        runCatching {
+            val parsed = document.inputStream().use { EpubParser.parse(readBounded(it, MAX_IMPORT_BYTES), fallbackTitle) }
+            if (!CoverImages.save(parsed.coverImageBytes, cover)) checked.createNewFile()
+        }
+    }
 
     private fun isBookId(id: String) = id.matches(Regex("[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"))
 
     companion object {
         private const val MAX_IMPORT_BYTES = 20 * 1024 * 1024
+        private const val NO_EPUB_COVER_MARKER = "cover-none-v1"
         internal const val MAX_CHAPTERS = 1200
         internal const val MAX_PDF_PAGES = 5000
         private val PDF_HEADER = "%PDF-".toByteArray(Charsets.US_ASCII)
@@ -213,4 +259,10 @@ class BookRepository(context: Context) {
     }
 }
 
-internal data class ParsedBook(val title: String, val author: String, val format: String, val chapters: List<BookChapter>)
+internal data class ParsedBook(
+    val title: String,
+    val author: String,
+    val format: String,
+    val chapters: List<BookChapter>,
+    val coverImageBytes: ByteArray? = null,
+)

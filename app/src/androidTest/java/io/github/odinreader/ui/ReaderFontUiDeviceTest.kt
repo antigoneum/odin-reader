@@ -137,6 +137,7 @@ class ReaderFontUiDeviceTest {
         val original = store.getProgress(DemoBook.ID)
         assertTrue("The font test must start from a nonzero bookmark", original.charOffset > 0)
         val originalText = compose.runOnIdle { requireNotNull(body()).text.toString() }
+        val originalSize = compose.runOnIdle { requireNotNull(body()).let { it.width to it.height } }
 
         for (font in listOf(ReaderFont.LxgwWenKai, ReaderFont.NotoSerif)) {
             gamepad(KeyEvent.KEYCODE_BUTTON_START)
@@ -174,6 +175,8 @@ class ReaderFontUiDeviceTest {
         val restored = store.getProgress(DemoBook.ID)
         assertEquals("A font round trip must preserve the original page", original.pageIndex, restored.pageIndex)
         assertEquals(original.charOffset, restored.charOffset)
+        assertEquals("The same font and viewport must retain native dimensions", originalSize,
+            compose.runOnIdle { requireNotNull(body()).let { it.width to it.height } })
         assertEquals(originalText, compose.runOnIdle { requireNotNull(body()).text.toString() })
     }
 

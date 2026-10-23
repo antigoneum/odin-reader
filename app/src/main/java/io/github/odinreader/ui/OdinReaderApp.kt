@@ -151,11 +151,15 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                             onClose = model::closeBook,
                             onActionReady = { readerAction = it },
                             activateFocused = activity::activateFocusedControl,
+                            readingMode = state.readingMode,
+                            pageAnimation = state.pageAnimations[state.readingMode] ?: state.readingMode.defaultAnimation,
                         )
                         state.content != null -> ReaderScreen(
                             content = currentContent!!,
                             initialProgress = state.progress,
                             fontSize = state.fontSize,
+                            lineSpacing = state.lineSpacing,
+                            letterSpacing = state.letterSpacing,
                             readerFonts = state.readerFonts,
                             paperStyle = state.paperStyle,
                             bindings = state.controllerBindings,
@@ -168,6 +172,8 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                             onClose = model::closeBook,
                             onActionReady = { readerAction = it },
                             activateFocused = activity::activateFocusedControl,
+                            readingMode = state.readingMode,
+                            pageAnimation = state.pageAnimations[state.readingMode] ?: state.readingMode.defaultAnimation,
                         )
                         else -> Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                             HomeMenu(
@@ -192,6 +198,10 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                                     )
                                     HomeTab.Settings -> SettingsScreen(
                                         fontSize = state.fontSize,
+                                        lineSpacing = state.lineSpacing,
+                                        onLineSpacing = model::setLineSpacing,
+                                        letterSpacing = state.letterSpacing,
+                                        onLetterSpacing = model::setLetterSpacing,
                                         readerFonts = state.readerFonts,
                                         onChineseFont = model::setChineseFont,
                                         onEnglishFont = model::setEnglishFont,
@@ -209,6 +219,10 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                                         embedded = true,
                                         tabFocusRequester = tabFocus[HomeTab.Settings.ordinal],
                                         backFocusRequester = contentFocus[HomeTab.Settings.ordinal],
+                                        readingMode = state.readingMode,
+                                        pageAnimations = state.pageAnimations,
+                                        onReadingMode = model::setReadingMode,
+                                        onPageAnimation = model::setPageAnimation,
                                     )
                                     HomeTab.Help -> HelpScreen(
                                         bindings = state.controllerBindings,
@@ -228,6 +242,10 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                     ) {
                         SettingsScreen(
                             fontSize = state.fontSize,
+                            lineSpacing = state.lineSpacing,
+                            onLineSpacing = model::setLineSpacing,
+                            letterSpacing = state.letterSpacing,
+                            onLetterSpacing = model::setLetterSpacing,
                             readerFonts = state.readerFonts,
                             onChineseFont = model::setChineseFont,
                             onEnglishFont = model::setEnglishFont,
@@ -244,6 +262,10 @@ fun OdinReaderApp(activity: MainActivity, model: ReaderViewModel = viewModel()) 
                             activateFocused = activity::activateFocusedControl,
                             title = if (state.content != null) "阅读设置" else "设置",
                             isPdf = state.content?.pdfFile != null,
+                            readingMode = state.readingMode,
+                            pageAnimations = state.pageAnimations,
+                            onReadingMode = model::setReadingMode,
+                            onPageAnimation = model::setPageAnimation,
                         )
                     }
                 }

@@ -47,6 +47,7 @@ import io.github.odinreader.data.BookRepository
 import io.github.odinreader.data.DemoBook
 import io.github.odinreader.data.ReadingProgress
 import io.github.odinreader.input.ControllerButton
+import io.github.odinreader.reader.ReadingMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -220,6 +221,7 @@ class ReaderUiDeviceTest {
         gamepad(KeyEvent.KEYCODE_BUTTON_R1)
         val expectedCounter = awaitCounter(chapter = 2, page = 2)
         val expectedText = nativeBodyText()
+        val expectedSize = nativeBodyBounds().size
         val expectedProgress = BookRepository(context).getProgress(DemoBook.ID)
 
         gamepad(KeyEvent.KEYCODE_BUTTON_B)
@@ -231,6 +233,7 @@ class ReaderUiDeviceTest {
 
         compose.activityRule.scenario.recreate()
         awaitCounter(chapter = 2, page = 2)
+        assertEquals("Recreation must retain the native reading viewport", expectedSize, nativeBodyBounds().size)
         assertEquals(expectedText, nativeBodyText())
         assertEquals(expectedProgress, BookRepository(context).getProgress(DemoBook.ID))
     }
@@ -409,12 +412,13 @@ class ReaderUiDeviceTest {
 
     private fun nativeBodyText(): String = compose.runOnIdle {
         descendants(compose.activity.window.decorView).filterIsInstance<TextView>()
-            .firstOrNull()?.text?.toString().orEmpty()
+            .firstOrNull { (it.tag as? RenderedReaderPageKey)?.role == "primary" }
+            ?.text?.toString().orEmpty()
     }
 
     private fun nativeBodyBounds(): Rect = compose.runOnIdle {
         val views = descendants(compose.activity.window.decorView).toList()
-        val body = views.filterIsInstance<TextView>().first()
+        val body = views.filterIsInstance<TextView>().first { (it.tag as? RenderedReaderPageKey)?.role == "primary" }
         val composeView = views.filterIsInstance<AbstractComposeView>().first()
         val bodyLocation = IntArray(2)
         val composeLocation = IntArray(2)
@@ -458,7 +462,10 @@ class ReaderUiDeviceTest {
         const val PROGRESS_PREFS = "reading_progress"
         const val SETTINGS_PREFS = "reader_settings"
         val progressKeys = listOf(DemoBook.ID + ".chapter", DemoBook.ID + ".page", DemoBook.ID + ".offset")
-        val settingKeys = listOf("font_size", "reader_font", "reader_font_chinese", "reader_font_english", "paper_style", "app_theme") +
+        // These tests exercise single-page touch zones and the default paginator.
+        // Isolate every layout choice from the user's current reading profile.
+        val settingKeys = listOf("font_size", "reader_font", "reader_font_chinese", "reader_font_english", "paper_style", "app_theme",
+            "reading_mode", "line_spacing", "letter_spacing") + ReadingMode.entries.map { "page_animation.${it.id}" } +
             ControllerButton.entries.map { "binding.${it.name}" }
         val COUNTER = Regex("""第 (\d+) / (\d+) 章 · (\d+) / (\d+) 页""")
         val pageCounterMatcher = SemanticsMatcher("reader chapter/page counter") { node ->

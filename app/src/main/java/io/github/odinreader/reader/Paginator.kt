@@ -20,7 +20,7 @@ data class Page(
  * paragraph breaks all paginate using their actual displayed widths.
  *
  * The renderer must use the same typeface, no font padding, SIMPLE line breaking, no
- * hyphenation, and the same text size and line-spacing multiplier. A TextView
+ * hyphenation, and the same text size, letter spacing and line-spacing multiplier. A TextView
  * inside AndroidView provides the closest match to these Android measurements.
  * Call on a worker dispatcher; text layout can be expensive for large chapters.
  */
@@ -37,6 +37,7 @@ object Paginator {
         lineSpacingMultiplier: Float = 1.65f,
         typeface: Typeface = Typeface.SERIF,
         typography: ReaderTypography? = null,
+        letterSpacing: Float = 0f,
     ): List<Page> {
         require(widthPx > 0) { "Page width must be positive" }
         require(heightPx > 0) { "Page height must be positive" }
@@ -44,11 +45,16 @@ object Paginator {
         require(lineSpacingMultiplier.isFinite() && lineSpacingMultiplier >= 1f) {
             "Line spacing must be at least 1"
         }
+        require(letterSpacing.isFinite() && letterSpacing in 0f..0.2f) {
+            "Letter spacing must be between 0 and 0.2 em"
+        }
         if (text.isEmpty()) return listOf(Page(0, 0, ""))
 
+        val spacingEm = letterSpacing
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
             this.typeface = typography?.englishTypeface ?: typeface
             textSize = textSizePx
+            this.letterSpacing = spacingEm
             isElegantTextHeight = true
         }
         val pages = PageCollector(text, heightPx)

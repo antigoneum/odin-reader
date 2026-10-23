@@ -41,12 +41,15 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.odinreader.data.BookContent
 import io.github.odinreader.data.ReadingProgress
 import io.github.odinreader.input.ControllerAction
 import io.github.odinreader.input.ControllerBindings
 import io.github.odinreader.reader.PdfPageRenderer
+import io.github.odinreader.reader.ReadingMode
+import io.github.odinreader.reader.PageTurnAnimation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -57,8 +60,22 @@ import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
 import kotlin.math.min
 
-private data class PdfRenderKey(val page: Int, val width: Int, val height: Int, val retry: Int)
-private data class RenderedPdfPage(val key: PdfRenderKey, val bitmap: Bitmap)
+private data class PdfRenderKey(val page: Int, val width: Int, val height: Int, val retry: Int, val mode: ReadingMode)
+private data class RenderedPdfPage(
+    val key: PdfRenderKey,
+    val bitmap: Bitmap,
+    val nextBitmap: Bitmap?,
+    val geometry: ReaderPageGeometry,
+)
+
+/** Spread navigation never advances to a duplicate last right-hand page. */
+internal fun pdfTurnTarget(current: Int, count: Int, mode: ReadingMode, amount: Int): Int {
+    require(count > 0)
+    val start = current.coerceIn(0, count - 1)
+    if (amount == 1 && mode.visibleLastIndex(start, count) == count - 1) return start
+    val delta = if (amount == 1 || amount == -1) amount.toLong() * mode.pageStep else amount.toLong()
+    return (start.toLong() + delta).coerceIn(0L, count - 1L).toInt()
+}
 
 /** Original PDF pages, including scans and illustrations, rendered entirely offline. */
 @Composable
@@ -75,6 +92,8 @@ fun PdfReaderScreen(
     onClose: () -> Unit,
     onActionReady: (((ControllerAction) -> Boolean)?) -> Unit,
     activateFocused: () -> Boolean,
+    readingMode: ReadingMode = ReadingMode.Single,
+    pageAnimation: PageTurnAnimation = PageTurnAnimation.Slide,
 ) {
     val pageCount = content.book.chapterCount.coerceAtLeast(1)
     val file = requireNotNull(content.pdfFile)
@@ -84,7 +103,9 @@ fun PdfReaderScreen(
     var chrome by rememberSaveable(content.book.id) { mutableStateOf(false) }
     var showPages by rememberSaveable(content.book.id) { mutableStateOf(false) }
     var zoom by rememberSaveable(content.book.id) { mutableFloatStateOf(1f) }
-    var pan by remember(content.book.id, pageIndex) { mutableStateOf(Offset.Zero) }
+    var pan by remember(content.book.id, pageIndex, readingMode) { mutableStateOf(Offset.Zero) }
+    var turn by remember { mutableIntStateOf(0) }
+    var turnDirection by remember { mutableIntStateOf(1) }
     var retry by remember { mutableIntStateOf(0) }
     var rendered by remember(content.book.id) { mutableStateOf<RenderedPdfPage?>(null) }
     var renderError by remember(content.book.id) { mutableStateOf<String?>(null) }
@@ -101,16 +122,22 @@ fun PdfReaderScreen(
     }
     SideEffect { onBackgroundChanged(background) }
 
-    fun selectPage(index: Int) {
+    LaunchedEffect(readingMode) { zoom = 1f; pan = Offset.Zero }
+
+    fun selectPage(index: Int, animate: Boolean = false) {
         val next = index.coerceIn(0, pageCount - 1)
         if (next != pageIndex) {
+            if (animate) {
+                turnDirection = if (next > pageIndex) 1 else -1
+                turn++
+            }
             pageIndex = next
             zoom = 1f
             pan = Offset.Zero
         }
     }
     fun changePage(amount: Int): Boolean {
-        selectPage(pageIndex + amount)
+        selectPage(pdfTurnTarget(pageIndex, pageCount, readingMode, amount), animate = true)
         return true
     }
     fun closeLayer() {
@@ -164,9 +191,11 @@ fun PdfReaderScreen(
 
     Box(Modifier.fillMaxSize().background(background).testTag("pdf-reader")) {
         Column(
-            Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 20.dp, vertical = 10.dp)
+            Modifier.fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top))
+                .padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 2.dp)
                 .then(if (showPages) Modifier.clearAndSetSemantics {} else Modifier),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(content.book.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onBackground)
@@ -177,25 +206,42 @@ fun PdfReaderScreen(
                 val density = LocalDensity.current
                 val widthPx = with(density) { maxWidth.roundToPx() }.coerceAtLeast(1)
                 val heightPx = with(density) { maxHeight.roundToPx() }.coerceAtLeast(1)
-                val key = PdfRenderKey(pageIndex, widthPx, heightPx, retry)
+                val gap = if (readingMode == ReadingMode.Single) 0.dp else 14.dp
+                val sheetWidthPx = readingMode.pageWidthPx(widthPx, with(density) { gap.roundToPx() })
+                val geometry = ReaderPageGeometry(maxWidth, maxHeight,
+                    with(density) { sheetWidthPx.toDp() }, gap)
+                val key = PdfRenderKey(pageIndex, sheetWidthPx, heightPx, retry, readingMode)
                 val active = rendered?.takeIf { it.key == key }
                 SideEffect { onReadingVisible(active != null && !showPages && !obscured) }
                 LaunchedEffect(file, key) {
-                    rendered = null
                     renderError = null
-                    var unpublished: Bitmap? = null
+                    val unpublished = mutableListOf<Bitmap>()
                     try {
-                        val bitmap = withContext(Dispatchers.IO) {
+                        val pages = withContext(Dispatchers.IO) {
                             renderLock.withLock {
                                 coroutineContext.ensureActive()
                                 PdfPageRenderer(file).use { renderer ->
-                                    renderer.render(key.page, key.width * 2, key.height * 2).also { unpublished = it }
+                                    val primary = renderer.render(key.page, key.width * 2, key.height * 2)
+                                        .also { unpublished += it }
+                                    coroutineContext.ensureActive()
+                                    val secondary = if (readingMode != ReadingMode.Single && key.page + 1 < pageCount) {
+                                        try {
+                                            renderer.render(key.page + 1, key.width * 2, key.height * 2).also { unpublished += it }
+                                        } catch (cancelled: CancellationException) { throw cancelled }
+                                        catch (error: Exception) {
+                                            // Both leaves of a spread are reading content. Do not
+                                            // publish a partial spread that step-two navigation skips.
+                                            if (readingMode.isSpread) throw error
+                                            null
+                                        }
+                                    } else null
+                                    primary to secondary
                                 }
                             }
                         }
                         coroutineContext.ensureActive()
-                        rendered = RenderedPdfPage(key, bitmap)
-                        unpublished = null
+                        rendered = RenderedPdfPage(key, pages.first, pages.second, geometry)
+                        unpublished.clear()
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: Exception) {
@@ -203,19 +249,19 @@ fun PdfReaderScreen(
                     } finally {
                         // A cancelled render was never given to Compose and can be released now.
                         // Published images are left to GC: a rendering frame may still reference them.
-                        unpublished?.recycle()
+                        unpublished.forEach(Bitmap::recycle)
                     }
                 }
                 LaunchedEffect(active?.key) {
                     if (active != null) onProgress(ReadingProgress(pageIndex = active.key.page,
-                        completed = active.key.page == pageCount - 1))
+                        completed = (active.key.page + if (active.key.mode.isSpread && active.nextBitmap != null) 1 else 0) == pageCount - 1))
                 }
-                val fitScale = active?.bitmap?.let { min(widthPx.toFloat() / it.width, heightPx.toFloat() / it.height) } ?: 1f
-                val imageWidth = (active?.bitmap?.width ?: widthPx) * fitScale
+                val fitScale = active?.bitmap?.let { min(sheetWidthPx.toFloat() / it.width, heightPx.toFloat() / it.height) } ?: 1f
+                val imageWidth = (active?.bitmap?.width ?: sheetWidthPx) * fitScale
                 val imageHeight = (active?.bitmap?.height ?: heightPx) * fitScale
                 fun constrainPan(offset: Offset, scale: Float): Offset {
-                    val horizontal = ((imageWidth * scale - widthPx) / 2f).coerceAtLeast(0f)
-                    val vertical = ((imageHeight * scale - heightPx) / 2f).coerceAtLeast(0f)
+                    val horizontal = (((if (readingMode == ReadingMode.Single) imageWidth else widthPx.toFloat()) * scale - widthPx) / 2f).coerceAtLeast(0f)
+                    val vertical = (((if (readingMode == ReadingMode.Single) imageHeight else heightPx.toFloat()) * scale - heightPx) / 2f).coerceAtLeast(0f)
                     return Offset(offset.x.coerceIn(-horizontal, horizontal), offset.y.coerceIn(-vertical, vertical))
                 }
                 fun setZoom(value: Float) {
@@ -235,19 +281,25 @@ fun PdfReaderScreen(
                         }
                     }
                 }
+                AnimatedPagePresentation(
+                    frame = active,
+                    frameKey = { it.key },
+                    frameGeometry = { it.geometry },
+                    frameMode = { it.key.mode },
+                    canAnimate = { target, previous -> target.geometry == previous.geometry && target.key.mode == previous.key.mode },
+                    animation = pageAnimation,
+                    turn = turn,
+                    direction = turnDirection,
+                    modifier = Modifier.fillMaxSize().testTag("pdf-mode-${readingMode.id}")
+                        .graphicsLayer {
+                            scaleX = zoom; scaleY = zoom
+                            translationX = pan.x; translationY = pan.y
+                        },
+                    dividerColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.13f),
+                ) { frame, secondary, role, accessible, sheetModifier ->
+                    PdfSheet(frame, secondary, role, accessible, sheetModifier)
+                }
                 if (active != null) {
-                    Image(
-                        bitmap = active.bitmap.asImageBitmap(),
-                        contentDescription = "PDF 第 ${pageIndex + 1} 页",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize().testTag("pdf-page")
-                            .graphicsLayer {
-                                scaleX = zoom
-                                scaleY = zoom
-                                translationX = pan.x
-                                translationY = pan.y
-                            },
-                    )
                     // One gesture owner distinguishes unzoomed page swipes from zoomed panning.
                     Box(Modifier.fillMaxSize().pointerInput(obscured, showPages, key) {
                         if (obscured || showPages) return@pointerInput
@@ -288,7 +340,7 @@ fun PdfReaderScreen(
                                     modifier = Modifier.semantics { contentDescription = "缩小" }) { Text("缩小") }
                                 TextButton(onClick = { setZoom(1f); pan = Offset.Zero }, enabled = !obscured,
                                     modifier = Modifier.semantics { contentDescription = "适合页面" }) { Text("适合页面") }
-                                TextButton(onClick = { setZoom(widthPx / imageWidth); pan = Offset.Zero }, enabled = !obscured,
+                                TextButton(onClick = { setZoom(if (readingMode == ReadingMode.Single) widthPx / imageWidth else 1f); pan = Offset.Zero }, enabled = !obscured,
                                     modifier = Modifier.semantics { contentDescription = "适合宽度" }) { Text("适合宽度") }
                             }
                         }
@@ -302,16 +354,24 @@ fun PdfReaderScreen(
                     CircularProgressIndicator(Modifier.testTag("pdf-loading"))
                 }
             }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("${bindings.labelFor(ControllerAction.PreviousPage)} 上一页 · ${bindings.labelFor(ControllerAction.NextPage)} 下一页",
-                    modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (rendered?.key?.page == pageIndex) "第 ${pageIndex + 1} / $pageCount 页" else "正在载入第 ${pageIndex + 1} 页…",
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.testTag("pdf-counter"))
-                Text("双指缩放 · 放大后拖动", modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.fillMaxWidth().testTag("pdf-footer"), verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f).testTag("pdf-footer-left")) {
+                    Text("${bindings.labelFor(ControllerAction.PreviousPage)} 上一页 · ${bindings.labelFor(ControllerAction.NextPage)} 下一页",
+                        style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${bindings.labelFor(ControllerAction.ToggleControls)} 控制栏 · ${bindings.labelFor(ControllerAction.OpenContents)} 目录",
+                        style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.width(120.dp))
+                Column(Modifier.weight(1f).testTag("pdf-footer-right"), horizontalAlignment = Alignment.End) {
+                    val current = rendered?.takeIf { it.key.page == pageIndex && it.key.mode == readingMode }
+                    val last = readingMode.visibleLastIndex(pageIndex, pageCount)
+                    val pagesLabel = if (last > pageIndex) "第 ${pageIndex + 1}–${last + 1} / $pageCount 页" else "第 ${pageIndex + 1} / $pageCount 页"
+                    Text(if (current != null) pagesLabel else "正在载入第 ${pageIndex + 1} 页…",
+                        textAlign = TextAlign.End, maxLines = 1, style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.testTag("pdf-counter"))
+                    Text("${readingMode.label} · 双指缩放", textAlign = TextAlign.End, maxLines = 1,
+                        style = MaterialTheme.typography.labelSmall, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         if (chrome && !showPages) {
@@ -334,7 +394,7 @@ fun PdfReaderScreen(
                     TextButton(onClick = { changePage(-1) }, enabled = !obscured && pageIndex > 0) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Text("上一页")
                     }
-                    TextButton(onClick = { changePage(1) }, enabled = !obscured && pageIndex < pageCount - 1) {
+                    TextButton(onClick = { changePage(1) }, enabled = !obscured && readingMode.visibleLastIndex(pageIndex, pageCount) < pageCount - 1) {
                         Text("下一页"); Icon(Icons.AutoMirrored.Filled.ArrowForward, null)
                     }
                 }
@@ -345,6 +405,43 @@ fun PdfReaderScreen(
                 selectPage(it)
                 showPages = false
             }
+        }
+    }
+}
+
+@Composable
+private fun PdfSheet(
+    frame: RenderedPdfPage,
+    secondary: Boolean,
+    role: String,
+    accessible: Boolean,
+    modifier: Modifier,
+) {
+    val bitmap = if (secondary) frame.nextBitmap else frame.bitmap
+    val page = frame.key.page + if (secondary) 1 else 0
+    Box(
+        modifier.requiredSize(frame.geometry.sheetWidth, frame.geometry.height)
+            .background(MaterialTheme.colorScheme.background)
+            .testTag("pdf-sheet-$role")
+            .then(if (accessible) Modifier else Modifier.clearAndSetSemantics {}),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null) {
+            val tag = when {
+                role == "preview" -> "pdf-page-preview"
+                !accessible -> "pdf-page-outgoing-$role"
+                secondary -> "pdf-page-secondary"
+                else -> "pdf-page"
+            }
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = if (accessible) "PDF 第 ${page + 1} 页" else null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().testTag(tag),
+            )
+        } else if (frame.key.mode.hasPreview) {
+            Text("没有可用的下一页", style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f))
         }
     }
 }

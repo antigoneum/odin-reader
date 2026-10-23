@@ -134,6 +134,28 @@ class PaginatorDeviceTest {
         assertRenderedPages(text, 1100, 620, sp(20f), "mixed font chunk boundaries", typography = typography)
     }
 
+    @Test
+    fun letterSpacingExtremesMatchNativeMixedFontsAtSmallAndLargeSizes() {
+        val text = ("山海之间‘阅读’，繁體漢字与English 123保持连续。" +
+            "JetBrains Nerd \uF120 \uE0B0, cafe\u0301, spaces and punctuation. 👩‍🚀📚\n\n").repeat(24)
+        val typography = runBlocking {
+            ReaderFonts.load(context, ReaderFontSelection(ReaderFont.LxgwWenKai, ReaderFont.JetBrainsMono))
+        }
+        val original = Paginator.paginate(text, 1100, 620, sp(20f), typography = typography)
+        val anchor = original[original.size / 2].startOffset + 3
+        for (size in listOf(14f, 32f)) {
+            for (spacing in listOf(0f, 0.2f)) {
+                val case = "mixed fonts $size sp letters=$spacing em"
+                assertRenderedPages(text, 740, 620, sp(size), case,
+                    typography = typography, letterSpacing = spacing, verifyWidths = true)
+                val pages = Paginator.paginate(text, 740, 620, sp(size),
+                    typography = typography, letterSpacing = spacing)
+                val restored = pages[Paginator.pageIndexAtOffset(pages, anchor)]
+                assertTrue("$case: restore the same UTF-16 character", anchor in restored.startOffset until restored.endOffset)
+            }
+        }
+    }
+
     private fun sp(value: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value, context.resources.displayMetrics)
 
@@ -145,8 +167,11 @@ class PaginatorDeviceTest {
         case: String,
         typeface: Typeface = Typeface.SERIF,
         typography: ReaderTypography? = null,
+        letterSpacing: Float = 0f,
+        verifyWidths: Boolean = false,
     ) {
-        val pages = Paginator.paginate(text, widthPx, heightPx, textSizePx, typeface = typeface, typography = typography)
+        val pages = Paginator.paginate(text, widthPx, heightPx, textSizePx,
+            typeface = typeface, typography = typography, letterSpacing = letterSpacing)
         assertEquals("$case: pagination must preserve every UTF-16 code unit", text, pages.joinToString("") { it.text })
         assertEquals(0, pages.first().startOffset)
         assertEquals(text.length, pages.last().endOffset)
@@ -157,12 +182,16 @@ class PaginatorDeviceTest {
             val display = typography?.style(text, page.startOffset, page.endOffset) ?: page.text
             assertEquals("$case: applying fonts must preserve page characters", page.text, display.toString())
             val measurement = measureTextView(display, widthPx, heightPx, textSizePx,
-                typography?.englishTypeface ?: typeface)
+                typography?.englishTypeface ?: typeface, letterSpacing)
             assertEquals("$case: TextView must lay out the entire supplied page", page.text.length, measurement.finalLineEnd)
             // A trailing newline can create an extra empty line. Its blank height is not a clipped glyph.
             assertTrue(
                 "$case page=$index size=$textSizePx lastGlyphBottom=${measurement.lastGlyphBottom} viewport=$heightPx lines=${measurement.lineCount}",
                 measurement.lastGlyphBottom <= heightPx,
+            )
+            if (verifyWidths) assertTrue(
+                "$case page=$index widestLine=${measurement.widestLine} viewport=$widthPx",
+                measurement.widestLine <= widthPx + 1f,
             )
         }
         Log.i("OdinReaderValidation", "$case: ${pages.size} pages rendered without clipped glyphs")
@@ -170,7 +199,8 @@ class PaginatorDeviceTest {
 
     @SuppressLint("InlinedApi") // BREAK_STRATEGY_SIMPLE is the compile-time integer 0.
     @Suppress("DEPRECATION")
-    private fun measureTextView(text: CharSequence, widthPx: Int, heightPx: Int, textSizePx: Float, face: Typeface): TextMeasurement {
+    private fun measureTextView(text: CharSequence, widthPx: Int, heightPx: Int, textSizePx: Float, face: Typeface,
+        letterSpacing: Float = 0f): TextMeasurement {
         var result: TextMeasurement? = null
         instrumentation.runOnMainSync {
             val view = TextView(context).apply {
@@ -184,6 +214,7 @@ class PaginatorDeviceTest {
                 }
                 setPadding(0, 0, 0, 0)
                 setLineSpacing(0f, 1.65f)
+                this.letterSpacing = letterSpacing
                 breakStrategy = android.graphics.text.LineBreaker.BREAK_STRATEGY_SIMPLE
                 hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
                 gravity = Gravity.TOP or Gravity.START
@@ -208,10 +239,22 @@ class PaginatorDeviceTest {
                 lastGlyphBottom,
                 layout.lineCount,
                 layout.getLineEnd(layout.lineCount - 1),
+                (0 until layout.lineCount).maxOfOrNull { line ->
+                    val start = layout.getLineStart(line)
+                    val end = layout.getLineEnd(line)
+                    var visibleEnd = end
+                    while (visibleEnd > start && text[visibleEnd - 1].isWhitespace()) visibleEnd--
+                    // Android deliberately counts trailing whitespace on its LAST
+                    // line even in getLineMax. Keep the original styled range and
+                    // paint, but exclude those invisible characters from width.
+                    if (line == layout.lineCount - 1 && visibleEnd != end) {
+                        if (visibleEnd == start) 0f else Layout.getDesiredWidth(text, start, visibleEnd, view.paint)
+                    } else layout.getLineMax(line)
+                } ?: 0f,
             )
         }
         return checkNotNull(result)
     }
 
-    private data class TextMeasurement(val lastGlyphBottom: Int, val lineCount: Int, val finalLineEnd: Int)
+    private data class TextMeasurement(val lastGlyphBottom: Int, val lineCount: Int, val finalLineEnd: Int, val widestLine: Float)
 }

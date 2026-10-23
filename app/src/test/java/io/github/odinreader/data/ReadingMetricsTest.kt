@@ -64,6 +64,37 @@ class ReadingMetricsTest {
     }
 
     @Test
+    fun readingATwoPageSpreadLearnsSpeedOnlyWhenTwoPageNavigationIsEnabled() {
+        val content = textBook(10_000)
+        val record = ReadingMetrics.initialize(content, ReadingRecord("book"))
+        val progress = ReadingProgress(0, 2, 1_000)
+        val spread = ReadingMetrics.withProgress(content, record, progress, 60_000L, sequentialPageStep = 2)
+        val jump = ReadingMetrics.withProgress(content, record, progress, 60_000L)
+        assertEquals(1_000.0, spread.speedUnits, 0.0)
+        assertEquals(60_000L, spread.speedReadingMillis)
+        assertEquals(0.0, jump.speedUnits, 0.0)
+        val reflow = ReadingMetrics.withProgress(content, record, ReadingProgress(0, 2, 0),
+            60_000L, sequentialPageStep = 2)
+        assertEquals(0.0, reflow.speedUnits, 0.0)
+    }
+
+    @Test
+    fun pdfSpreadsLearnTwoPagesButStillRejectFastFlipsAndLargeJumps() {
+        val content = pdfBook(20)
+        val record = ReadingMetrics.initialize(content, ReadingRecord("book"))
+        val spread = ReadingMetrics.withProgress(content, record, ReadingProgress(pageIndex = 2),
+            120_000L, sequentialPageStep = 2)
+        assertEquals(2.0, spread.speedUnits, 0.0)
+        assertEquals(120_000L, spread.speedReadingMillis)
+        val skipped = ReadingMetrics.withProgress(content, record, ReadingProgress(pageIndex = 10),
+            120_000L, sequentialPageStep = 2)
+        val rapid = ReadingMetrics.withProgress(content, record, ReadingProgress(pageIndex = 2),
+            1_000L, sequentialPageStep = 2)
+        assertEquals(0.0, skipped.speedUnits, 0.0)
+        assertEquals(0.0, rapid.speedUnits, 0.0)
+    }
+
+    @Test
     fun rapidFlipsAndArbitraryPageJumpsDoNotTeachAnExtremeSpeed() {
         val content = textBook(10_000)
         val record = ReadingMetrics.initialize(content, ReadingRecord("book"))

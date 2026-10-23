@@ -33,6 +33,7 @@ import io.github.odinreader.data.DemoBook
 import io.github.odinreader.data.ReadingProgress
 import io.github.odinreader.input.ControllerAction
 import io.github.odinreader.input.ControllerButton
+import io.github.odinreader.reader.ReadingMode
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
@@ -54,7 +55,8 @@ class SettingsUiDeviceTest {
     private lateinit var savedSettings: Map<String, Any?>
     private lateinit var savedProgress: Map<String, Any?>
     private val historyGuard by lazy { ReadingHistoryTestGuard(context, DemoBook.ID) }
-    private val settingsKeys = listOf("font_size", "reader_font", "reader_font_chinese", "reader_font_english", "paper_style", "app_theme") +
+    private val settingsKeys = listOf("font_size", "reader_font", "reader_font_chinese", "reader_font_english", "paper_style", "app_theme",
+        "reading_mode", "line_spacing", "letter_spacing") + ReadingMode.entries.map { "page_animation.${it.id}" } +
         ControllerButton.entries.map { "binding.${it.name}" }
     private val progressKeys = listOf("chapter", "page", "offset").map { "${DemoBook.ID}.$it" }
     private val isolatedPreferences = object : ExternalResource() {

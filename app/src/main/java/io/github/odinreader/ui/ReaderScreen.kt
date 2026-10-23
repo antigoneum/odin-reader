@@ -1,11 +1,6 @@
 package io.github.odinreader.ui
 
 import android.annotation.SuppressLint
-import android.graphics.Typeface
-import android.text.Layout
-import android.util.TypedValue
-import android.view.Gravity
-import android.widget.TextView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -27,17 +22,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import io.github.odinreader.data.BookContent
 import io.github.odinreader.data.ReadingProgress
 import io.github.odinreader.input.ControllerAction
@@ -47,13 +41,14 @@ import io.github.odinreader.reader.Paginator
 import io.github.odinreader.reader.ReaderFontSelection
 import io.github.odinreader.reader.ReaderFonts
 import io.github.odinreader.reader.ReaderTypography
+import io.github.odinreader.reader.ReadingMode
+import io.github.odinreader.reader.PageTurnAnimation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private enum class ReaderPanel { Contents }
-private data class LayoutKey(val chapter: Int, val width: Int, val height: Int, val textSize: Float, val fonts: ReaderFontSelection)
+private data class LayoutKey(val chapter: Int, val width: Int, val height: Int, val textSize: Float, val fonts: ReaderFontSelection, val mode: ReadingMode, val lineSpacing: Float, val letterSpacing: Float)
 private data class ReaderLayout(val key: LayoutKey, val pages: List<Page>, val index: Int, val anchorOffset: Int, val typography: ReaderTypography)
-private data class PageTextKey(val chapter: Int, val start: Int, val end: Int, val fonts: ReaderFontSelection)
 
 @SuppressLint("InlinedApi") // SIMPLE is an inlined integer, safe on API 28.
 @Composable
@@ -73,6 +68,10 @@ fun ReaderScreen(
     onClose: () -> Unit,
     onActionReady: (((ControllerAction) -> Boolean)?) -> Unit,
     activateFocused: () -> Boolean,
+    readingMode: ReadingMode = ReadingMode.Single,
+    pageAnimation: PageTurnAnimation = PageTurnAnimation.Slide,
+    lineSpacing: Float = 1.65f,
+    letterSpacing: Float = 0f,
 ) {
     var chapter by rememberSaveable(content.book.id) {
         mutableIntStateOf(initialProgress.chapterIndex.coerceIn(content.chapters.indices))
@@ -82,6 +81,8 @@ fun ReaderScreen(
     var chrome by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<ReaderPanel?>(null) }
     var layout by remember { mutableStateOf<ReaderLayout?>(null) }
+    var turn by remember { mutableIntStateOf(0) }
+    var turnDirection by remember { mutableIntStateOf(1) }
     val focusManager = LocalFocusManager.current
     val toolbarFocus = remember { FocusRequester() }
     val view = LocalView.current
@@ -114,6 +115,8 @@ fun ReaderScreen(
     fun changeChapter(direction: Int): Boolean {
         val next = chapter + direction
         if (next in content.chapters.indices) {
+            turnDirection = direction
+            turn++
             chapter = next
             anchor = 0
             seekEnd = false
@@ -122,22 +125,33 @@ fun ReaderScreen(
         return true
     }
     fun changePage(direction: Int): Boolean {
-        val current = layout?.takeIf { it.key.chapter == chapter && it.key.fonts == readerFonts } ?: return true
-        val next = current.index + direction
+        val current = layout?.takeIf {
+            it.key.chapter == chapter && it.key.fonts == readerFonts && it.key.mode == readingMode &&
+                it.key.lineSpacing == lineSpacing && it.key.letterSpacing == letterSpacing
+        } ?: return true
+        val next = if (direction < 0) readingMode.previousStart(current.index)
+            else current.index + readingMode.pageStep
         when {
             next in current.pages.indices -> {
+                turnDirection = direction
+                turn++
                 anchor = current.pages[next].startOffset
                 layout = current.copy(index = next, anchorOffset = anchor)
                 onProgress(ReadingProgress(chapter, next, anchor,
-                    completed = chapter == content.chapters.lastIndex && next == current.pages.lastIndex))
+                    completed = chapter == content.chapters.lastIndex &&
+                        readingMode.visibleLastIndex(next, current.pages.size) == current.pages.lastIndex))
             }
             direction > 0 && chapter < content.chapters.lastIndex -> {
+                turnDirection = direction
+                turn++
                 chapter++
                 anchor = 0
                 seekEnd = false
                 onProgress(ReadingProgress(chapter, 0, 0))
             }
             direction < 0 && chapter > 0 -> {
+                turnDirection = direction
+                turn++
                 chapter--
                 anchor = content.chapters[chapter].text.length
                 seekEnd = true
@@ -186,21 +200,33 @@ fun ReaderScreen(
     }
 
     Box(Modifier.fillMaxSize().background(background)) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 24.dp, vertical = 12.dp)) {
+        Column(Modifier.fillMaxSize().windowInsetsPadding(
+            WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal),
+        ).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top))
+            .padding(horizontal = 24.dp).padding(top = 6.dp, bottom = 2.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(content.book.title, color = foreground.copy(alpha = 0.55f), style = MaterialTheme.typography.labelMedium, maxLines = 1, modifier = Modifier.weight(1f))
                 Text(content.chapters[chapter].title, color = foreground.copy(alpha = 0.55f), style = MaterialTheme.typography.labelMedium, maxLines = 1, modifier = Modifier.weight(1f))
             }
             BoxWithConstraints(
-                Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp),
+                Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp).padding(top = 8.dp, bottom = 4.dp),
                 contentAlignment = Alignment.TopCenter,
             ) {
                 val density = LocalDensity.current
-                val pageWidth = minOf(maxWidth, 840.dp)
-                val widthPx = with(density) { pageWidth.roundToPx() }.coerceAtLeast(1)
-                val heightPx = with(density) { maxHeight.roundToPx() }.coerceAtLeast(1)
+                val viewportWidth = minOf(maxWidth, 1200.dp)
+                val gutter = if (readingMode == ReadingMode.Single) 0.dp else 20.dp
+                val viewportPx = with(density) { viewportWidth.roundToPx() }.coerceAtLeast(1)
+                val sheetPx = readingMode.pageWidthPx(viewportPx, with(density) { gutter.roundToPx() })
+                val geometry = ReaderPageGeometry(
+                    viewportWidth = viewportWidth,
+                    height = maxHeight,
+                    sheetWidth = with(density) { sheetPx.toDp() },
+                    gap = gutter,
+                )
+                val widthPx = with(density) { geometry.textWidth.roundToPx() }.coerceAtLeast(1)
+                val heightPx = with(density) { geometry.textHeight.roundToPx() }.coerceAtLeast(1)
                 val textSizePx = with(density) { fontSize.sp.toPx() }
-                val key = LayoutKey(chapter, widthPx, heightPx, textSizePx, readerFonts)
+                val key = LayoutKey(chapter, widthPx, heightPx, textSizePx, readerFonts, readingMode, lineSpacing, letterSpacing)
                 val text = content.chapters[chapter].text
                 LaunchedEffect(key) {
                     layout = null
@@ -208,9 +234,10 @@ fun ReaderScreen(
                     val end = seekEnd
                     val typography = ReaderFonts.load(context, readerFonts)
                     val pages = withContext(Dispatchers.Default) {
-                        Paginator.paginate(text, widthPx, heightPx, textSizePx, typography = typography)
+                        Paginator.paginate(text, widthPx, heightPx, textSizePx,
+                            lineSpacingMultiplier = lineSpacing, typography = typography, letterSpacing = letterSpacing)
                     }
-                    val index = if (end) pages.lastIndex else Paginator.pageIndexAtOffset(pages, target)
+                    val index = if (end) readingMode.finalSpreadStart(pages.size) else Paginator.pageIndexAtOffset(pages, target)
                     anchor = if (end) pages[index].startOffset else target.coerceIn(0, text.length)
                     seekEnd = false
                     layout = ReaderLayout(key, pages, index, anchor, typography)
@@ -220,35 +247,26 @@ fun ReaderScreen(
                 LaunchedEffect(active) {
                     active?.let {
                         onProgress(ReadingProgress(it.key.chapter, it.index, it.anchorOffset,
-                            completed = it.key.chapter == content.chapters.lastIndex && it.index == it.pages.lastIndex))
+                            completed = it.key.chapter == content.chapters.lastIndex &&
+                                readingMode.visibleLastIndex(it.index, it.pages.size) == it.pages.lastIndex))
                     }
                 }
                 val flipPage by rememberUpdatedState<(Int) -> Unit> { if (!obscured) changePage(it) }
                 val toggleChrome by rememberUpdatedState { if (!obscured) chrome = !chrome }
                 var dragDistance by remember { mutableFloatStateOf(0f) }
                 val dragThreshold = with(density) { 48.dp.toPx() }
-                AndroidView(
-                    factory = { context ->
-                        TextView(context).apply {
-                            typeface = Typeface.SERIF
-                            includeFontPadding = false
-                            setFallbackLineSpacing(true)
-                            isElegantTextHeight = true
-                            if (android.os.Build.VERSION.SDK_INT >= 35) {
-                                setUseBoundsForWidth(true)
-                                setLocalePreferredLineHeightForMinimumUsed(true)
-                            }
-                            setPadding(0, 0, 0, 0)
-                            setLineSpacing(0f, 1.65f)
-                            breakStrategy = android.graphics.text.LineBreaker.BREAK_STRATEGY_SIMPLE
-                            hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
-                            gravity = Gravity.TOP or Gravity.START
-                            textDirection = android.view.View.TEXT_DIRECTION_FIRST_STRONG_LTR
-                            isFocusable = false
-                            importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_YES
-                        }
+                ReaderPagePresentation(
+                    frame = active?.let {
+                        ReaderPageFrame(chapter, it.index, it.pages.size, text,
+                            it.pages[it.index], it.pages.getOrNull(it.index + 1),
+                            it.typography, readerFonts, textSizePx, lineSpacing, letterSpacing, readingMode, geometry)
                     },
-                    modifier = Modifier.width(pageWidth).fillMaxHeight()
+                    animation = pageAnimation,
+                    turn = turn,
+                    direction = turnDirection,
+                    foreground = foreground,
+                    background = background,
+                    modifier = Modifier.size(viewportWidth, maxHeight).testTag("reader-viewport")
                         .pointerInput(Unit) {
                             detectTapGestures { position ->
                                 when {
@@ -268,44 +286,39 @@ fun ReaderScreen(
                                 },
                             ) { change, amount -> change.consume(); dragDistance += amount }
                         },
-                    update = { textView ->
-                        active?.let {
-                            if (textView.typeface !== it.typography.englishTypeface) textView.typeface = it.typography.englishTypeface
-                        }
-                        textView.setTextSize(TypedValue.COMPLEX_UNIT_PX, textSizePx)
-                        textView.setTextColor(foreground.toArgb())
-                        val page = active?.let { it.pages[it.index] }
-                        val pageText = page?.text ?: ""
-                        val renderedKey = if (active != null && page != null)
-                            PageTextKey(active.key.chapter, page.startOffset, page.endOffset, active.key.fonts) else null
-                        // The same span rule and chapter context are used by StaticLayout.
-                        if (textView.text.toString() != pageText || textView.tag != renderedKey) {
-                            textView.text = if (active != null && page != null)
-                                active.typography.style(text, page.startOffset, page.endOffset) else ""
-                            textView.tag = renderedKey
-                        }
-                    },
                 )
                 if (active == null) CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
-            val active = layout?.takeIf { it.key.chapter == chapter && it.key.fonts == readerFonts }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            val active = layout?.takeIf {
+                it.key.chapter == chapter && it.key.fonts == readerFonts && it.key.mode == readingMode &&
+                    it.key.lineSpacing == lineSpacing && it.key.letterSpacing == letterSpacing
+            }
+            Row(Modifier.fillMaxWidth().testTag("reader-footer"), verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f).testTag("reader-footer-hints")) {
+                    Text(
+                        "${bindings.labelFor(ControllerAction.PreviousPage)} 上一页 · ${bindings.labelFor(ControllerAction.NextPage)} 下一页",
+                        color = foreground.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "${bindings.labelFor(ControllerAction.ToggleControls)} 控制栏 · ${bindings.labelFor(ControllerAction.OpenContents)} 目录",
+                        color = foreground.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // The system gesture handle occupies the bottom centre, not either footer block.
+                Spacer(Modifier.width(132.dp))
                 Text(
-                    "${bindings.labelFor(ControllerAction.PreviousPage)} 上一页 · ${bindings.labelFor(ControllerAction.NextPage)} 下一页",
-                    color = foreground.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    if (active == null) "正在排版…" else "第 ${chapter + 1} / ${content.chapters.size} 章 · ${active.index + 1} / ${active.pages.size} 页",
+                    if (active == null) "正在排版…" else when (readingMode) {
+                        ReadingMode.DualColumn -> "第 ${chapter + 1} / ${content.chapters.size} 章 · ${(active.index / 2) + 1} / ${(active.pages.size + 1) / 2} 双栏页"
+                        else -> "第 ${chapter + 1} / ${content.chapters.size} 章 · ${active.index + 1} / ${active.pages.size} 页"
+                    },
                     color = foreground.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall,
-                )
-                Text(
-                    "${bindings.labelFor(ControllerAction.ToggleControls)} 控制栏 · ${bindings.labelFor(ControllerAction.OpenContents)} 目录",
-                    color = foreground.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.weight(1f), maxLines = 1,
-                    textAlign = TextAlign.End, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).testTag("reader-page-counter"),
+                    textAlign = TextAlign.End, maxLines = 2,
                 )
             }
+
         }
         if (chrome && panel == null) {
             Surface(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(), tonalElevation = 6.dp, shadowElevation = 3.dp) {

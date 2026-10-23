@@ -1,7 +1,5 @@
 package io.github.odinreader.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -18,11 +16,9 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.odinreader.data.Book
 import io.github.odinreader.data.ReadingRecord
 
@@ -132,29 +128,7 @@ private fun BookCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp, focusedElevation = 6.dp),
     ) {
-        Column(
-            Modifier.fillMaxWidth().weight(1f).background(cover).padding(horizontal = 14.dp, vertical = 10.dp),
-        ) {
-            Text(book.format, color = Color.White.copy(alpha = 0.65f),
-                style = MaterialTheme.typography.labelSmall, letterSpacing = 3.sp)
-            Spacer(Modifier.height(6.dp))
-            Text(book.title, fontFamily = FontFamily.Serif, fontSize = 22.sp,
-                color = Color(0xFFF5F0DF), maxLines = 2, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("book-cover-title-${book.id}"))
-            Spacer(Modifier.weight(1f))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("${readingPercent(readingRecord)}%", color = Color(0xFFF5F0DF),
-                    style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f).testTag("book-progress-${book.id}"))
-                Text(readingStatusLabel(readingRecord), color = Color.White.copy(alpha = 0.8f),
-                    style = MaterialTheme.typography.labelSmall)
-            }
-            Spacer(Modifier.height(4.dp))
-            Box(Modifier.fillMaxWidth().height(4.dp).background(Color.White.copy(alpha = 0.22f), CircleShape)) {
-                Box(Modifier.fillMaxWidth(readingFraction(readingRecord).toFloat()).fillMaxHeight()
-                    .background(Color(0xFFF5F0DF), CircleShape))
-            }
-        }
+        BookCover(book, readingRecord, cover, Modifier.fillMaxWidth().weight(1f))
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.titleSmall, modifier = Modifier.testTag("book-title-${book.id}"))
